@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
     }
 
     let result: { text: string; url: string } | null = null;
-    let source = company.source;
+    let source: 'motleyfool' | 'samsung_ir' | 'skhynix_gurufocus' | 'failed' = company.source;
 
     // Route to the right fetcher based on company
     if (company.source === 'samsung_ir') {

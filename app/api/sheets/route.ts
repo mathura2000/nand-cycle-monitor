@@ -16,10 +16,16 @@ function getSheets() {
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
   } else {
-    // Local dev — use credentials.json file
+    // Local dev — walk up from cwd to find credentials.json (handles git worktrees)
     const path = require('path');
+    const fs = require('fs');
+    let dir = process.cwd();
+    while (dir !== path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, 'credentials.json'))) break;
+      dir = path.dirname(dir);
+    }
     auth = new google.auth.GoogleAuth({
-      keyFile: path.join(process.cwd(), 'credentials.json'),
+      keyFile: path.join(dir, 'credentials.json'),
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
   }
@@ -27,9 +33,53 @@ function getSheets() {
   return google.sheets({ version: 'v4', auth });
 }
 
-// GET — read a tab
+function parseTab(rows: string[][]): Record<string, string>[] {
+  if (rows.length < 2) return [];
+  const headers = rows[0];
+  return rows.slice(1).map(row => {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+    return obj;
+  });
+}
+
+// GET — read a tab, or action=data for pre-processed page data
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+  const action = searchParams.get('action');
+
+  // Structured data endpoint used by page components
+  if (action === 'data') {
+    try {
+      const sheets = getSheets();
+      const [sigRes, cfgRes] = await Promise.all([
+        sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'signals!A:R' }),
+        sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'config!A:F' }),
+      ]);
+
+      const signals = parseTab(sigRes.data.values || []);
+      const config = parseTab(cfgRes.data.values || []);
+
+      // Derive metadata from signals
+      const quarters = [...new Set(signals.map(r => r.quarter).filter(Boolean))];
+      quarters.sort(); // lexicographic works for "Q1 2026" format
+      const latestQuarter = quarters.at(-1) ?? '';
+
+      const latestRows = signals.filter(r => r.quarter === latestQuarter);
+      const sourcesCount = latestRows.length;
+      const totalSources = 8;
+
+      const dates = latestRows.map(r => r.ingested_at).filter(Boolean);
+      dates.sort();
+      const lastIngested = dates.at(-1) ?? '';
+
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested });
+    } catch (error) {
+      console.error('Sheets data error:', error);
+      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '' });
+    }
+  }
+
   const tab = searchParams.get('tab');
   const range = searchParams.get('range') || `${tab}!A:ZZ`;
 
