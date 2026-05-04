@@ -1,508 +1,577 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
-const COMPANIES = [
-  { ticker: 'SNDK', name: 'SanDisk', role: 'vendor', primary: true },
-  { ticker: 'MU', name: 'Micron', role: 'vendor', primary: false },
-  { ticker: 'SSNLF', name: 'Samsung', role: 'vendor', primary: false },
-  { ticker: 'HXSCL', name: 'SK Hynix', role: 'vendor', primary: false },
-  { ticker: 'MSFT', name: 'Microsoft', role: 'hyperscaler', primary: false },
-  { ticker: 'GOOG', name: 'Alphabet', role: 'hyperscaler', primary: false },
-  { ticker: 'AMZN', name: 'Amazon', role: 'hyperscaler', primary: false },
-  { ticker: 'META', name: 'Meta', role: 'hyperscaler', primary: false },
-];
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-type Phase = 'idle' | 'fetching' | 'extracting' | 'ready' | 'failed';
+type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review' | 'needs-url';
+
+interface DivergentField {
+  field: string;
+  claudeValue: number | string | null;
+  oaiValue: number | string | null;
+  claudeQuote: string | null;
+  oaiQuote: string | null;
+}
 
 interface CompanyState {
-  phase: Phase;
-  transcriptUrl?: string;
-  transcriptText?: string;
-  source?: string;
-  claude?: Record<string, unknown>;
-  openai?: Record<string, unknown>;
-  divergences?: Array<{ field: string; claude: unknown; openai: unknown; needs_review: boolean }>;
-  confirmed?: Record<string, unknown>;
-  manualUrl?: string;
-  error?: string;
-}
-
-interface FlaggedField {
   ticker: string;
   name: string;
-  field: string;
-  claude: unknown;
-  openai: unknown;
-  divergence_magnitude: number | null;
-  resolved?: 'claude' | 'openai' | 'edit';
-  editValue?: string;
+  type: 'vendor' | 'hyperscaler';
+  sourceLabel: string;
+  defaultUrl: string;
+  status: CompanyStatus;
+  urlOverride: string;
+  showUrlInput: boolean;
+  transcriptUrl?: string;
+  divergentFields?: DivergentField[];
+  claudeData?: Record<string, unknown>;
+  oaiData?: Record<string, unknown>;
 }
 
-export default function IngestPage() {
-  const [companies, setCompanies] = useState<Record<string, CompanyState>>(
-    Object.fromEntries(COMPANIES.map(c => [c.ticker, { phase: 'idle' }]))
-  );
-  const [semiManual, setSemiManual] = useState('');
-  const [runNotes, setRunNotes] = useState('');
-  const [flaggedFields, setFlaggedFields] = useState<FlaggedField[]>([]);
-  const [phase, setPhase] = useState<'setup' | 'running' | 'review' | 'saving' | 'done'>('setup');
-  const [savedRunId, setSavedRunId] = useState<string | null>(null);
+const COMPANY_ORDER = ['SSNLF', 'HXSCL', 'MU', 'SNDK', 'MSFT', 'GOOG', 'AMZN', 'META'];
 
-  function updateCompany(ticker: string, update: Partial<CompanyState>) {
-    setCompanies(prev => ({ ...prev, [ticker]: { ...prev[ticker], ...update } }));
-  }
+const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
+  SNDK:  { name: 'SanDisk',   type: 'vendor' },
+  MU:    { name: 'Micron',    type: 'vendor' },
+  SSNLF: { name: 'Samsung',   type: 'vendor' },
+  HXSCL: { name: 'SK Hynix', type: 'vendor' },
+  MSFT:  { name: 'Microsoft', type: 'hyperscaler' },
+  GOOG:  { name: 'Alphabet',  type: 'hyperscaler' },
+  AMZN:  { name: 'Amazon',    type: 'hyperscaler' },
+  META:  { name: 'Meta',      type: 'hyperscaler' },
+};
 
-  async function runSingle(ticker: string) {
-    const company = COMPANIES.find(c => c.ticker === ticker)!;
-    const state = companies[ticker];
+function sourceLabel(ticker: string, defaultUrl: string): string {
+  if (ticker === 'SSNLF') return 'Samsung IR PDF · auto-pattern';
+  if (ticker === 'HXSCL') return 'Yahoo Finance · browser only';
+  if (defaultUrl.includes('yahoo.com')) return 'Yahoo Finance · browser only';
+  if (defaultUrl.includes('fool.com')) return 'Motley Fool · default';
+  if (defaultUrl) return 'URL · default';
+  return 'No URL configured';
+}
 
-    updateCompany(ticker, { phase: 'fetching', error: undefined });
+// ── Styles ─────────────────────────────────────────────────────────────────────
 
-    // Step 1: Fetch transcript
-    const fetchRes = await fetch('/api/fetch-transcript', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ticker, manualUrl: state.manualUrl || undefined })
-    });
-    const fetchData = await fetchRes.json();
+const S = {
+  page: { background: 'var(--bg-base)', minHeight: '100vh' } as React.CSSProperties,
 
-    if (!fetchRes.ok || !fetchData.text) {
-      updateCompany(ticker, { phase: 'failed', error: fetchData.error });
-      return;
-    }
+  runBar: {
+    background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
+    borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center',
+    gap: 10, marginBottom: 14,
+  } as React.CSSProperties,
 
-    updateCompany(ticker, {
-      phase: 'extracting',
-      transcriptUrl: fetchData.url,
-      transcriptText: fetchData.text,
-      source: fetchData.source
-    });
+  rbLabel: {
+    fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em',
+    textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const,
+  } as React.CSSProperties,
 
-    // Step 2: Dual extraction
-    const extractRes = await fetch('/api/extract-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ticker,
-        transcriptText: fetchData.text,
-        transcriptUrl: fetchData.url
-      })
-    });
-    const extractData = await extractRes.json();
+  quarterInput: {
+    background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5,
+    color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 80, outline: 'none',
+  } as React.CSSProperties,
 
-    if (!extractRes.ok) {
-      updateCompany(ticker, { phase: 'failed', error: extractData.error });
-      return;
-    }
+  companySelect: {
+    background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5,
+    color: 'var(--gold)', fontSize: 11, padding: '5px 8px', width: 160, outline: 'none',
+  } as React.CSSProperties,
 
-    // Auto-confirm non-divergent fields
-    const confirmed = { ...(extractData.claude || extractData.openai) };
+  btnAll: {
+    fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const,
+    padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const,
+    background: '#1e1c18', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)',
+  } as React.CSSProperties,
 
-    updateCompany(ticker, {
-      phase: 'ready',
-      claude: extractData.claude,
-      openai: extractData.openai,
-      divergences: extractData.divergences,
-      confirmed
-    });
+  btnSel: {
+    fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const,
+    padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const,
+    background: 'var(--gold)', color: '#0e0c09', border: 'none',
+  } as React.CSSProperties,
 
-    // Collect flagged fields
-    const newFlags: FlaggedField[] = (extractData.divergences || [])
-      .filter((d: { needs_review: boolean }) => d.needs_review)
-      .map((d: { field: string; claude: unknown; openai: unknown; divergence_magnitude: number | null }) => ({
-        ticker,
-        name: company.name,
-        field: d.field,
-        claude: d.claude,
-        openai: d.openai,
-        divergence_magnitude: d.divergence_magnitude,
-      }));
+  coList: { display: 'flex', flexDirection: 'column' as const, gap: 5 } as React.CSSProperties,
 
-    setFlaggedFields(prev => [...prev.filter(f => f.ticker !== ticker), ...newFlags]);
-  }
+  coRow: (status: CompanyStatus) => ({
+    background: status === 'needs-url' ? '#110d08' : 'var(--bg-surface)',
+    border: `0.5px solid ${
+      status === 'needs-url' ? 'rgba(201,120,76,0.33)'
+      : status === 'review' ? 'rgba(201,168,76,0.27)'
+      : status === 'ingested' ? 'rgba(74,154,106,0.2)'
+      : 'var(--border)'
+    }`,
+    borderRadius: status === 'needs-url' ? '8px 8px 0 0' : 8,
+    padding: '10px 14px',
+    display: 'grid',
+    gridTemplateColumns: '72px 90px 1fr 90px 80px',
+    alignItems: 'center',
+    gap: 10,
+  }) as React.CSSProperties,
 
-  async function runAll() {
-    setPhase('running');
-    setFlaggedFields([]);
-    await Promise.all(COMPANIES.map(c => runSingle(c.ticker)));
-    setPhase('review');
-  }
+  coTicker: { fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' } as React.CSSProperties,
+  coName: { fontSize: 10, color: 'var(--text-muted)' } as React.CSSProperties,
+  coSource: (warn: boolean) => ({
+    fontSize: 9, color: warn ? 'rgba(201,120,76,0.53)' : 'var(--text-ghost)',
+    whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis',
+  }) as React.CSSProperties,
+};
 
-  function resolveFlagged(ticker: string, field: string, resolution: 'claude' | 'openai' | 'edit', editValue?: string) {
-    setFlaggedFields(prev => prev.map(f =>
-      f.ticker === ticker && f.field === field
-        ? { ...f, resolved: resolution, editValue }
-        : f
-    ));
+// ── Badge ─────────────────────────────────────────────────────────────────────
 
-    // Apply resolution to confirmed data
-    const state = companies[ticker];
-    const value = resolution === 'claude' ? state.claude?.[field]
-      : resolution === 'openai' ? state.openai?.[field]
-      : editValue;
-
-    updateCompany(ticker, {
-      confirmed: { ...state.confirmed, [field]: value }
-    });
-  }
-
-  async function saveAndScore() {
-    setPhase('saving');
-    const runId = `run_${Date.now()}`;
-    const quarter = companies['MU']?.claude?.['quarter'] as string || 'Unknown';
-
-    // Save each company's confirmed data to Sheets
-    for (const company of COMPANIES) {
-      const state = companies[company.ticker];
-      if (state.phase !== 'ready' || !state.confirmed) continue;
-
-      const tab = company.role === 'vendor' ? 'vendors' : 'hyperscalers';
-      await fetch('/api/sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tab,
-          action: 'append',
-          data: {
-            ...state.confirmed,
-            company: company.name,
-            ticker: company.ticker,
-            transcript_url: state.transcriptUrl,
-            run_id: runId,
-            confirmed_at: new Date().toISOString(),
-            run_notes: runNotes
-          }
-        })
-      });
-    }
-
-    // Save SEMI BBB if entered
-    if (semiManual) {
-      const bbb = parseFloat(semiManual);
-      await fetch('/api/sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tab: 'semi_bbb',
-          action: 'append',
-          data: {
-            month: new Date().toISOString().substring(0, 7),
-            book_to_bill: bbb,
-            interpretation: bbb < 0.9 ? 'Bullish' : bbb < 1.0 ? 'Neutral' : 'Bearish',
-            entered_at: new Date().toISOString()
-          }
-        })
-      });
-    }
-
-    // Read config for weights
-    const configRes = await fetch('/api/sheets?tab=config');
-    const configData = await configRes.json();
-
-    // Run scoring
-    const vendorRows = COMPANIES
-      .filter(c => c.role === 'vendor')
-      .map(c => ({ ...companies[c.ticker]?.confirmed, company: c.name, ticker: c.ticker }))
-      .filter(r => r.company);
-
-    const hyperscalerRows = COMPANIES
-      .filter(c => c.role === 'hyperscaler')
-      .map(c => ({ ...companies[c.ticker]?.confirmed, company: c.name, ticker: c.ticker }))
-      .filter(r => r.company);
-
-    const scoreRes = await fetch('/api/score', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        vendorRows,
-        hyperscalerRows,
-        semiLatest: semiManual || null,
-        configRows: configData.rows,
-        quarter,
-        runId
-      })
-    });
-    const scoreData = await scoreRes.json();
-
-    // Save cycle score
-    await fetch('/api/sheets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tab: 'cycle_scores',
-        action: 'append',
-        data: {
-          ...scoreData,
-          sources_current: COMPANIES.filter(c => companies[c.ticker]?.phase === 'ready').length,
-          sources_total: COMPANIES.length,
-          run_notes: runNotes
-        }
-      })
-    });
-
-    setSavedRunId(runId);
-    setPhase('done');
-  }
-
-  const allReady = COMPANIES.every(c =>
-    companies[c.ticker].phase === 'ready' || companies[c.ticker].phase === 'failed'
-  );
-  const unresolvedFlags = flaggedFields.filter(f => !f.resolved);
-  const phaseLabel: Record<Phase, string> = {
-    idle: 'Waiting',
-    fetching: 'Fetching transcript…',
-    extracting: 'Extracting (Claude + GPT)…',
-    ready: 'Ready',
-    failed: 'Failed'
+function Badge({ status }: { status: CompanyStatus }) {
+  const styles: Record<CompanyStatus, React.CSSProperties> = {
+    idle:       { background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)' },
+    running:    { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
+    ingested:   { background: '#0a160e', color: '#4a9a6a', border: '0.5px solid rgba(74,154,106,0.27)' },
+    review:     { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
+    'needs-url': { background: '#16100a', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.27)' },
   };
-  const phaseColor: Record<Phase, string> = {
-    idle: 'text-slate-500',
-    fetching: 'text-amber-400',
-    extracting: 'text-indigo-400',
-    ready: 'text-emerald-400',
-    failed: 'text-red-400'
+  const labels: Record<CompanyStatus, React.ReactNode> = {
+    idle: 'idle',
+    running: <><AnimDot />running</>,
+    ingested: '✓ ingested',
+    review: '! review',
+    'needs-url': 'needs url',
   };
-
   return (
-    <div className="min-h-screen bg-[#0a0d12] text-slate-200 p-6 font-sans">
-      <div className="max-w-5xl mx-auto">
+    <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap', textAlign: 'center', ...styles[status] }}>
+      {labels[status]}
+    </span>
+  );
+}
 
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between">
+function AnimDot() {
+  return <span style={{ display: 'inline-block', marginRight: 4, animation: 'pulseDot 1.2s ease-in-out infinite' }}>·</span>;
+}
+
+// ── Action cell ───────────────────────────────────────────────────────────────
+
+function Action({ status, onRun, onResolve, onFix, onView }: {
+  status: CompanyStatus;
+  onRun: () => void;
+  onResolve: () => void;
+  onFix: () => void;
+  onView: () => void;
+}) {
+  const base: React.CSSProperties = { fontSize: 10, color: 'var(--text-muted)', textAlign: 'right', cursor: 'pointer', background: 'none', border: 'none' };
+  if (status === 'idle')       return <button style={{ ...base, color: 'var(--gold)' }} onClick={onRun}>run →</button>;
+  if (status === 'running')    return <span style={{ ...base, color: 'var(--text-ghost)' }}>—</span>;
+  if (status === 'ingested')   return <button style={{ ...base, color: '#4a7fa5' }} onClick={onView}>view →</button>;
+  if (status === 'review')     return <button style={{ ...base, color: 'var(--gold)' }} onClick={onResolve}>resolve →</button>;
+  if (status === 'needs-url')  return <button style={{ ...base, color: 'var(--gold)' }} onClick={onFix}>fix →</button>;
+  return null;
+}
+
+// ── URL expansion panel ───────────────────────────────────────────────────────
+
+function UrlPanel({ defaultUrl, urlOverride, onChange, onRetry }: {
+  defaultUrl: string;
+  urlOverride: string;
+  onChange: (v: string) => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div style={{
+      background: '#110d08', border: '0.5px solid rgba(201,120,76,0.2)',
+      borderTop: 'none', borderRadius: '0 0 8px 8px',
+      padding: '8px 14px', marginTop: 0, marginBottom: 0,
+      display: 'flex', alignItems: 'center', gap: 8,
+    }}>
+      <span style={{ fontSize: 9, color: '#c9784c', whiteSpace: 'nowrap' }}>Working URL:</span>
+      <input
+        style={{
+          background: '#161410', border: '0.5px solid rgba(201,120,76,0.27)',
+          borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', flex: 1, outline: 'none',
+        }}
+        placeholder="paste a direct URL to the transcript"
+        value={urlOverride}
+        onChange={e => onChange(e.target.value)}
+      />
+      {defaultUrl && (
+        <a
+          href={defaultUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: 9, color: '#4a7fa5', textDecoration: 'underline', whiteSpace: 'nowrap', cursor: 'pointer' }}
+        >
+          open source in browser →
+        </a>
+      )}
+      <button
+        onClick={onRetry}
+        style={{
+          fontSize: 9, color: 'var(--gold)', padding: '3px 10px',
+          border: '0.5px solid rgba(201,168,76,0.27)', borderRadius: 3,
+          background: '#16120a', cursor: 'pointer',
+        }}
+      >
+        retry
+      </button>
+    </div>
+  );
+}
+
+// ── Divergence panel ──────────────────────────────────────────────────────────
+
+const FIELD_LABELS: Record<string, string> = {
+  bit_growth_pct: 'bit_growth_pct',
+  capex_pct: 'capex_pct',
+  asp_change_pct: 'asp_change_pct',
+  inventory_days: 'inventory_days',
+  mgmt_tone_score: 'mgmt_tone_score',
+};
+
+function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
+  ticker: string;
+  name: string;
+  fields: DivergentField[];
+  onUseClaude: (field: string) => void;
+  onUseOAI: (field: string) => void;
+}) {
+  return (
+    <div style={{
+      background: '#0f0e08', border: '0.5px solid rgba(201,168,76,0.2)',
+      borderRadius: 8, padding: '14px 16px', marginTop: 12,
+    }}>
+      <div style={{ fontSize: 9, color: 'var(--gold)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
+        {name} ({ticker}) · resolve divergence
+      </div>
+
+      {/* Header row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6a6058' }}>Field</span>
+        <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--gold)' }}>Claude</span>
+        <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#4a7fa5' }}>OpenAI</span>
+      </div>
+
+      {fields.map(f => (
+        <div key={f.field} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 6, marginBottom: 10 }}>
+          <span style={{ fontSize: 10, color: '#6a6058', paddingTop: 2 }}>{FIELD_LABELS[f.field] ?? f.field}</span>
+
+          {/* Claude column */}
           <div>
-            <h1 className="text-xl font-semibold text-slate-100">Data Ingestion</h1>
-            <p className="text-sm text-slate-500 mt-1">Fetch transcripts → Extract → Review → Score</p>
-          </div>
-          {phase === 'setup' && (
-            <button
-              onClick={runAll}
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-md transition-colors"
-            >
-              Run All
-            </button>
-          )}
-          {phase === 'review' && allReady && (
-            <button
-              onClick={saveAndScore}
-              disabled={unresolvedFlags.length > 0}
-              className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
-            >
-              {unresolvedFlags.length > 0
-                ? `Resolve ${unresolvedFlags.length} flags first`
-                : 'Save & Score'}
-            </button>
-          )}
-        </div>
-
-        {/* Company grid */}
-        <div className="grid grid-cols-2 gap-3 mb-8">
-          {COMPANIES.map(company => {
-            const state = companies[company.ticker];
-            return (
-              <div
-                key={company.ticker}
-                className={`bg-[#111520] rounded-lg p-4 border ${
-                  company.primary ? 'border-indigo-500/40' : 'border-slate-800'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-slate-200">{company.name}</span>
-                      {company.primary && (
-                        <span className="text-xs px-1.5 py-0.5 bg-indigo-900/40 text-indigo-400 rounded">PRIMARY</span>
-                      )}
-                      <span className="text-xs text-slate-600">{company.role}</span>
-                    </div>
-                    <div className={`text-xs mt-1 ${phaseColor[state.phase]}`}>
-                      {phaseLabel[state.phase]}
-                    </div>
-                    {state.error && (
-                      <div className="text-xs text-red-400 mt-1">{state.error}</div>
-                    )}
-                  </div>
-                  {state.phase === 'ready' && (
-                    <div className="text-right">
-                      <div className="text-xs text-slate-500">
-                        {state.divergences?.filter(d => d.needs_review).length || 0} flags
-                      </div>
-                      <div className="text-xs text-slate-600">{state.source}</div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Manual URL input for failed */}
-                {state.phase === 'failed' && (
-                  <div className="mt-3">
-                    <input
-                      type="url"
-                      placeholder="Paste transcript URL manually…"
-                      className="w-full text-xs bg-[#0a0d12] border border-slate-700 rounded px-2 py-1.5 text-slate-300 placeholder-slate-600"
-                      value={state.manualUrl || ''}
-                      onChange={e => updateCompany(company.ticker, { manualUrl: e.target.value })}
-                    />
-                    <button
-                      onClick={() => runSingle(company.ticker)}
-                      className="mt-1.5 text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                )}
-
-                {/* Progress bar */}
-                {(state.phase === 'fetching' || state.phase === 'extracting') && (
-                  <div className="mt-3 h-0.5 bg-slate-800 rounded overflow-hidden">
-                    <div
-                      className={`h-full rounded transition-all duration-500 ${
-                        state.phase === 'fetching' ? 'w-1/3 bg-amber-500' : 'w-2/3 bg-indigo-500'
-                      } animate-pulse`}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* SEMI BBB + Run Notes */}
-        <div className="grid grid-cols-2 gap-3 mb-8">
-          <div className="bg-[#111520] rounded-lg p-4 border border-slate-800">
-            <label className="text-xs text-slate-500 block mb-2">SEMI Book-to-Bill (manual entry)</label>
-            <input
-              type="number"
-              step="0.01"
-              placeholder="e.g. 1.05"
-              className="w-full text-sm font-mono bg-[#0a0d12] border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-600"
-              value={semiManual}
-              onChange={e => setSemiManual(e.target.value)}
-            />
-            {semiManual && (
-              <div className="text-xs mt-1.5 text-slate-500">
-                {parseFloat(semiManual) < 0.9 ? '→ Bullish (equipment orders slowing)'
-                  : parseFloat(semiManual) < 1.0 ? '→ Neutral'
-                  : '→ Bearish (capacity expansion underway)'}
+            <div style={{ fontSize: 10, color: 'var(--gold)' }}>
+              {f.claudeValue != null ? String(f.claudeValue) + (f.field.includes('pct') ? '%' : f.field === 'mgmt_tone_score' ? ' / 5' : '') : '—'}
+            </div>
+            {f.claudeQuote && (
+              <div style={{ fontSize: 9, color: 'rgba(201,168,76,0.53)', fontStyle: 'italic', lineHeight: 1.5, borderLeft: '1.5px solid rgba(201,168,76,0.27)', paddingLeft: 6, marginTop: 2 }}>
+                &ldquo;{f.claudeQuote.substring(0, 100)}{f.claudeQuote.length > 100 ? '…' : ''}&rdquo;
               </div>
             )}
+            <button
+              onClick={() => onUseClaude(f.field)}
+              style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' }}
+            >
+              use Claude →
+            </button>
           </div>
-          <div className="bg-[#111520] rounded-lg p-4 border border-slate-800">
-            <label className="text-xs text-slate-500 block mb-2">Run Notes (optional)</label>
-            <textarea
-              placeholder="Context not captured in data (e.g. tariff announcement this week)…"
-              className="w-full text-sm bg-[#0a0d12] border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-600 resize-none"
-              rows={3}
-              value={runNotes}
-              onChange={e => setRunNotes(e.target.value)}
-            />
+
+          {/* OpenAI column */}
+          <div>
+            <div style={{ fontSize: 10, color: '#4a7fa5' }}>
+              {f.oaiValue != null ? String(f.oaiValue) + (f.field.includes('pct') ? '%' : f.field === 'mgmt_tone_score' ? ' / 5' : '') : '—'}
+            </div>
+            {f.oaiQuote && (
+              <div style={{ fontSize: 9, color: 'rgba(74,127,165,0.53)', fontStyle: 'italic', lineHeight: 1.5, borderLeft: '1.5px solid rgba(74,127,165,0.27)', paddingLeft: 6, marginTop: 2 }}>
+                &ldquo;{f.oaiQuote.substring(0, 100)}{f.oaiQuote.length > 100 ? '…' : ''}&rdquo;
+              </div>
+            )}
+            <button
+              onClick={() => onUseOAI(f.field)}
+              style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#0a0f16', color: '#4a7fa5', border: '0.5px solid rgba(74,127,165,0.27)' }}
+            >
+              use OpenAI →
+            </button>
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
 
-        {/* Flagged fields review */}
-        {phase === 'review' && flaggedFields.length > 0 && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-medium text-slate-300">
-                Flagged Fields — {unresolvedFlags.length} of {flaggedFields.length} remaining
-              </h2>
-              <div className="text-xs text-slate-500">
-                Both models disagree — review and accept one or edit
-              </div>
-            </div>
+// ── Main page ─────────────────────────────────────────────────────────────────
 
-            <div className="space-y-2">
-              {flaggedFields.map(flag => (
-                <div
-                  key={`${flag.ticker}-${flag.field}`}
-                  className={`bg-[#111520] border rounded-lg p-4 ${
-                    flag.resolved ? 'border-emerald-900/40 opacity-60' : 'border-amber-900/40'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs px-1.5 py-0.5 bg-slate-800 rounded font-mono text-indigo-400">
-                          {flag.ticker}
-                        </span>
-                        <span className="text-xs text-slate-400 font-mono">{flag.field}</span>
-                        {flag.divergence_magnitude !== null && (
-                          <span className="text-xs text-amber-500">Δ {flag.divergence_magnitude.toFixed(1)}</span>
-                        )}
-                        {flag.resolved && (
-                          <span className="text-xs text-emerald-500">✓ resolved</span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className={`bg-[#0a0d12] rounded p-2 border ${
-                          flag.resolved === 'claude' ? 'border-emerald-600' : 'border-slate-800'
-                        }`}>
-                          <div className="text-slate-500 mb-1">Claude</div>
-                          <div className="font-mono text-slate-200">{String(flag.claude ?? 'null')}</div>
-                        </div>
-                        <div className={`bg-[#0a0d12] rounded p-2 border ${
-                          flag.resolved === 'openai' ? 'border-emerald-600' : 'border-slate-800'
-                        }`}>
-                          <div className="text-slate-500 mb-1">OpenAI</div>
-                          <div className="font-mono text-slate-200">{String(flag.openai ?? 'null')}</div>
-                        </div>
-                      </div>
-                    </div>
-                    {!flag.resolved && (
-                      <div className="flex flex-col gap-1.5 min-w-fit">
-                        <button
-                          onClick={() => resolveFlagged(flag.ticker, flag.field, 'claude')}
-                          className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 whitespace-nowrap"
-                        >
-                          Accept Claude
-                        </button>
-                        <button
-                          onClick={() => resolveFlagged(flag.ticker, flag.field, 'openai')}
-                          className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 whitespace-nowrap"
-                        >
-                          Accept OpenAI
-                        </button>
-                        <button
-                          onClick={() => {
-                            const val = prompt(`Enter value for ${flag.field}:`);
-                            if (val !== null) resolveFlagged(flag.ticker, flag.field, 'edit', val);
-                          }}
-                          className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300"
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+export default function IngestPage() {
+  const [quarter, setQuarter] = useState('Q1 2026');
+  const [selectedTicker, setSelectedTicker] = useState('all');
+  const [companies, setCompanies] = useState<Record<string, CompanyState>>({});
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
+  const [isLocal, setIsLocal] = useState(true);
+  const divergenceRef = useRef<HTMLDivElement>(null);
 
-        {/* Done state */}
-        {phase === 'done' && savedRunId && (
-          <div className="bg-emerald-950/40 border border-emerald-800/40 rounded-lg p-6 text-center">
-            <div className="text-emerald-400 text-lg mb-2">✓ Run Complete</div>
-            <div className="text-slate-400 text-sm">
-              Run ID: <span className="font-mono text-slate-300">{savedRunId}</span>
-            </div>
-            <div className="text-slate-500 text-xs mt-1">Data saved to Sheets · Cycle score computed</div>
-            <a
-              href="/"
-              className="mt-4 inline-block px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-sm text-slate-300"
-            >
-              View Dashboard →
-            </a>
-          </div>
-        )}
+  // Detect environment on mount
+  useEffect(() => {
+    setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  }, []);
 
-        {/* Saving state */}
-        {phase === 'saving' && (
-          <div className="text-center py-8 text-slate-500 text-sm">
-            Saving to Sheets and computing cycle score…
-          </div>
-        )}
+  // Load config on mount
+  useEffect(() => {
+    fetch('/api/sheets?action=data')
+      .then(r => r.json())
+      .then(data => {
+        const configMap: Record<string, { defaultUrl: string; notes: string }> = {};
+        for (const row of data.config || []) {
+          configMap[row.ticker] = { defaultUrl: row.default_url ?? '', notes: row.notes ?? '' };
+        }
+
+        const ingestedTickers = new Set(
+          (data.signals || [])
+            .filter((s: Record<string,string>) => s.quarter === quarter)
+            .map((s: Record<string,string>) => s.ticker)
+        );
+
+        const states: Record<string, CompanyState> = {};
+        for (const ticker of COMPANY_ORDER) {
+          const meta = BASE_META[ticker];
+          const cfg = configMap[ticker] ?? { defaultUrl: '', notes: '' };
+          states[ticker] = {
+            ticker,
+            name: meta.name,
+            type: meta.type,
+            sourceLabel: sourceLabel(ticker, cfg.defaultUrl),
+            defaultUrl: cfg.defaultUrl,
+            status: ingestedTickers.has(ticker) ? 'ingested' : 'idle',
+            urlOverride: '',
+            showUrlInput: false,
+          };
+        }
+        setCompanies(states);
+      })
+      .catch(() => {
+        // Fallback: build states from static meta
+        const states: Record<string, CompanyState> = {};
+        for (const ticker of COMPANY_ORDER) {
+          const meta = BASE_META[ticker];
+          states[ticker] = {
+            ticker, name: meta.name, type: meta.type,
+            sourceLabel: sourceLabel(ticker, ''), defaultUrl: '',
+            status: 'idle', urlOverride: '', showUrlInput: false,
+          };
+        }
+        setCompanies(states);
+      });
+  }, [quarter]);
+
+  function update(ticker: string, patch: Partial<CompanyState>) {
+    setCompanies(prev => ({ ...prev, [ticker]: { ...prev[ticker], ...patch } }));
+  }
+
+  async function runOne(ticker: string) {
+    const c = companies[ticker];
+    if (!c || c.status === 'running') return;
+
+    // Show "fetching…" in source label while running
+    update(ticker, {
+      status: 'running',
+      sourceLabel: c.sourceLabel.replace(/·.*$/, '· fetching…'),
+    });
+
+    try {
+      const res = await fetch('/api/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker, quarter, urlOverride: c.urlOverride || undefined }),
+      });
+      const data = await res.json();
+
+      if (data.status === 'ingested') {
+        update(ticker, {
+          status: 'ingested',
+          transcriptUrl: data.transcriptUrl,
+          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetched ok'),
+        });
+      } else if (data.status === 'review') {
+        update(ticker, {
+          status: 'review',
+          transcriptUrl: data.transcriptUrl,
+          divergentFields: data.divergentFields,
+          claudeData: data.claudeData,
+          oaiData: data.oaiData,
+          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetched ok'),
+        });
+        setResolveTarget(ticker);
+      } else if (data.status === 'needs-url') {
+        update(ticker, {
+          status: 'needs-url',
+          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'IP blocked'),
+          showUrlInput: true,
+        });
+      } else {
+        update(ticker, {
+          status: 'needs-url',
+          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetch failed'),
+          showUrlInput: true,
+        });
+      }
+    } catch (e) {
+      update(ticker, {
+        status: 'needs-url',
+        sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'error'),
+        showUrlInput: true,
+      });
+    }
+  }
+
+  function runAll() {
+    const toRun = COMPANY_ORDER.filter(t => companies[t]?.status !== 'ingested');
+    toRun.forEach(t => runOne(t));
+  }
+
+  function runSelected() {
+    if (selectedTicker === 'all') {
+      runAll();
+    } else {
+      runOne(selectedTicker);
+    }
+  }
+
+  function scrollToResolve(ticker: string) {
+    setResolveTarget(ticker);
+    setTimeout(() => {
+      divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  }
+
+  async function resolveField(ticker: string, field: string, source: 'claude' | 'oai') {
+    const c = companies[ticker];
+    if (!c?.divergentFields) return;
+
+    const sourceData = source === 'claude' ? c.claudeData : c.oaiData;
+    // Build merged fields: use source data as base, override divergent field
+    const merged = { ...(c.claudeData || {}), [field]: sourceData?.[field] };
+
+    // Check if all divergent fields are now resolved
+    const updatedFields = c.divergentFields.filter(f => f.field !== field);
+
+    if (updatedFields.length === 0) {
+      // All resolved — save to signals
+      try {
+        await fetch('/api/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'resolve',
+            ticker,
+            quarter,
+            fields: merged,
+            transcriptUrl: c.transcriptUrl ?? '',
+          }),
+        });
+        update(ticker, { status: 'ingested', divergentFields: [] });
+        setResolveTarget(null);
+      } catch {
+        // silent - show ingested anyway
+        update(ticker, { status: 'ingested', divergentFields: [] });
+        setResolveTarget(null);
+      }
+    } else {
+      update(ticker, {
+        claudeData: merged,
+        divergentFields: updatedFields,
+      });
+    }
+  }
+
+  const reviewCompany = resolveTarget ? companies[resolveTarget] : null;
+  const anyRunning = Object.values(companies).some(c => c.status === 'running');
+
+  return (
+    <div style={S.page}>
+      <style>{`
+        @keyframes pulseDot {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.25; }
+        }
+      `}</style>
+
+      {/* Production banner — shown on Vercel, hidden on localhost */}
+      {!isLocal && (
+        <div style={{
+          background: '#16120a', border: '0.5px solid rgba(201,168,76,0.4)',
+          borderRadius: 8, padding: '12px 16px', marginBottom: 14,
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--gold)' }}>⚠</span>
+          <span style={{ fontSize: 11, color: '#d4c090' }}>
+            Ingest is disabled on Vercel — transcript sites block data center IPs.
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            Run <code style={{ background: '#1e1c18', padding: '1px 5px', borderRadius: 3, fontSize: 10, color: 'var(--gold)' }}>scripts/start-ingest.sh</code> on your local machine to ingest.
+          </span>
+        </div>
+      )}
+
+      {/* Run bar */}
+      <div style={S.runBar}>
+        <span style={S.rbLabel}>Quarter</span>
+        <input
+          style={S.quarterInput}
+          value={quarter}
+          onChange={e => setQuarter(e.target.value)}
+        />
+        <span style={{ ...S.rbLabel, marginLeft: 8 }}>Company</span>
+        <select
+          style={S.companySelect}
+          value={selectedTicker}
+          onChange={e => setSelectedTicker(e.target.value)}
+        >
+          <option value="all">All 8 companies</option>
+          {COMPANY_ORDER.map(t => (
+            <option key={t} value={t}>{companies[t]?.name ?? t} ({t})</option>
+          ))}
+        </select>
+        <button style={S.btnAll} onClick={runAll} disabled={anyRunning}>Run all</button>
+        <button style={S.btnSel} onClick={runSelected} disabled={anyRunning}>Run selected</button>
       </div>
+
+      {/* Company list */}
+      <div style={S.coList}>
+        {COMPANY_ORDER.map(ticker => {
+          const c = companies[ticker];
+          if (!c) return null;
+          const isBlocked = c.sourceLabel.includes('blocked') || c.sourceLabel.includes('failed') || c.sourceLabel.includes('error');
+
+          return (
+            <div key={ticker}>
+              <div style={S.coRow(c.status)}>
+                <span style={S.coTicker}>{ticker}</span>
+                <span style={S.coName}>{c.name}</span>
+                <span style={S.coSource(isBlocked)}>{c.sourceLabel}</span>
+                <Badge status={c.status} />
+                <Action
+                  status={c.status}
+                  onRun={() => runOne(ticker)}
+                  onResolve={() => scrollToResolve(ticker)}
+                  onFix={() => update(ticker, { showUrlInput: !c.showUrlInput })}
+                  onView={() => { if (c.transcriptUrl) window.open(c.transcriptUrl, '_blank'); }}
+                />
+              </div>
+              {(c.status === 'needs-url' || c.showUrlInput) && (
+                isLocal ? (
+                  <UrlPanel
+                    defaultUrl={c.defaultUrl}
+                    urlOverride={c.urlOverride}
+                    onChange={v => update(ticker, { urlOverride: v })}
+                    onRetry={() => runOne(ticker)}
+                  />
+                ) : null
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Divergence panel */}
+      {reviewCompany && reviewCompany.divergentFields && reviewCompany.divergentFields.length > 0 && (
+        <div ref={divergenceRef}>
+          <DivergencePanel
+            ticker={reviewCompany.ticker}
+            name={reviewCompany.name}
+            fields={reviewCompany.divergentFields}
+            onUseClaude={field => resolveField(reviewCompany.ticker, field, 'claude')}
+            onUseOAI={field => resolveField(reviewCompany.ticker, field, 'oai')}
+          />
+        </div>
+      )}
     </div>
   );
 }
