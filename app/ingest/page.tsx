@@ -44,7 +44,8 @@ const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }
 
 function sourceLabel(ticker: string, defaultUrl: string): string {
   if (ticker === 'SSNLF') return 'Samsung IR PDF · auto-pattern';
-  if (ticker === 'HXSCL') return 'GuruFocus · verified';
+  if (ticker === 'HXSCL') return 'Yahoo Finance · browser only';
+  if (defaultUrl.includes('yahoo.com')) return 'Yahoo Finance · browser only';
   if (defaultUrl.includes('fool.com')) return 'Motley Fool · default';
   if (defaultUrl) return 'URL · default';
   return 'No URL configured';
@@ -294,7 +295,13 @@ export default function IngestPage() {
   const [selectedTicker, setSelectedTicker] = useState('all');
   const [companies, setCompanies] = useState<Record<string, CompanyState>>({});
   const [resolveTarget, setResolveTarget] = useState<string | null>(null);
+  const [isLocal, setIsLocal] = useState(true);
   const divergenceRef = useRef<HTMLDivElement>(null);
+
+  // Detect environment on mount
+  useEffect(() => {
+    setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  }, []);
 
   // Load config on mount
   useEffect(() => {
@@ -476,6 +483,23 @@ export default function IngestPage() {
         }
       `}</style>
 
+      {/* Production banner — shown on Vercel, hidden on localhost */}
+      {!isLocal && (
+        <div style={{
+          background: '#16120a', border: '0.5px solid rgba(201,168,76,0.4)',
+          borderRadius: 8, padding: '12px 16px', marginBottom: 14,
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--gold)' }}>⚠</span>
+          <span style={{ fontSize: 11, color: '#d4c090' }}>
+            Ingest is disabled on Vercel — transcript sites block data center IPs.
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            Run <code style={{ background: '#1e1c18', padding: '1px 5px', borderRadius: 3, fontSize: 10, color: 'var(--gold)' }}>scripts/start-ingest.sh</code> on your local machine to ingest.
+          </span>
+        </div>
+      )}
+
       {/* Run bar */}
       <div style={S.runBar}>
         <span style={S.rbLabel}>Quarter</span>
@@ -522,12 +546,14 @@ export default function IngestPage() {
                 />
               </div>
               {(c.status === 'needs-url' || c.showUrlInput) && (
-                <UrlPanel
-                  defaultUrl={c.defaultUrl}
-                  urlOverride={c.urlOverride}
-                  onChange={v => update(ticker, { urlOverride: v })}
-                  onRetry={() => runOne(ticker)}
-                />
+                isLocal ? (
+                  <UrlPanel
+                    defaultUrl={c.defaultUrl}
+                    urlOverride={c.urlOverride}
+                    onChange={v => update(ticker, { urlOverride: v })}
+                    onRetry={() => runOne(ticker)}
+                  />
+                ) : null
               )}
             </div>
           );

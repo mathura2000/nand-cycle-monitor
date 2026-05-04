@@ -336,6 +336,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ticker and quarter required' }, { status: 400 });
     }
 
+    // Production (Vercel) is read-only — ingest must run locally
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({
+        status: 'needs-url',
+        ticker,
+        quarter,
+        defaultUrl: '',
+        productionBlock: true,
+        message: 'Ingest must be run locally — run scripts/start-ingest.sh',
+      });
+    }
+
     const meta = COMPANY_META[ticker];
     if (!meta) return NextResponse.json({ error: `Unknown ticker: ${ticker}` }, { status: 400 });
 
