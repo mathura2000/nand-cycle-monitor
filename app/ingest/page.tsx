@@ -139,6 +139,8 @@ export default function IngestPage() {
   const [isLocal, setIsLocal] = useState(true);
   const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const divergenceRef = useRef<HTMLDivElement>(null);
+  const companiesRef = useRef<Record<string, CompanyState>>({});
+  companiesRef.current = companies;
 
   useEffect(() => {
     setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -191,7 +193,7 @@ export default function IngestPage() {
   }
 
   async function runOne(ticker: string) {
-    const c = companies[ticker];
+    const c = companiesRef.current[ticker];
     if (!c || c.status === 'running') return;
 
     update(ticker, { status: 'running' });
@@ -225,7 +227,7 @@ export default function IngestPage() {
   }
 
   function runAll() {
-    COMPANY_ORDER.filter(t => companies[t]?.status !== 'ingested').forEach(t => runOne(t));
+    COMPANY_ORDER.filter(t => companiesRef.current[t]?.status !== 'ingested').forEach(t => runOne(t));
   }
 
   async function resolveField(ticker: string, field: string, source: 'claude' | 'oai') {

@@ -336,8 +336,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ticker and quarter required' }, { status: 400 });
     }
 
-    // Production (Vercel) is read-only — ingest must run locally
-    if (process.env.NODE_ENV === 'production') {
+    // Production (Vercel) blocks auto-fetch, but always honour an explicit urlOverride
+    if (process.env.NODE_ENV === 'production' && !urlOverride) {
       return NextResponse.json({
         status: 'needs-url',
         ticker,
