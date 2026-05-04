@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review' | 'needs-url';
+type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review' | 'needs-url' | 'quarter-mismatch';
 
 interface DivergentField {
   field: string;
@@ -24,10 +24,13 @@ interface CompanyState {
   urlOverride: string;
   showUrlInput: boolean;
   transcriptUrl?: string;
+  transcriptQuarter?: string;       // quarter detected in the transcript
   divergentFields?: DivergentField[];
   claudeData?: Record<string, unknown>;
   oaiData?: Record<string, unknown>;
 }
+
+const CURRENT_QUARTER = 'Q1 2026';
 
 const COMPANY_ORDER = ['SSNLF', 'HXSCL', 'MU', 'SNDK', 'MSFT', 'GOOG', 'AMZN', 'META'];
 
@@ -43,9 +46,8 @@ const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }
 };
 
 function sourceLabel(ticker: string, defaultUrl: string): string {
-  if (ticker === 'SSNLF') return 'Samsung IR PDF · auto-pattern';
-  if (ticker === 'HXSCL') return 'Yahoo Finance · browser only';
-  if (defaultUrl.includes('yahoo.com')) return 'Yahoo Finance · browser only';
+  if (ticker === 'SSNLF') return 'Morningstar · manual url';
+  if (ticker === 'HXSCL') return 'Morningstar · manual url';
   if (defaultUrl.includes('fool.com')) return 'Motley Fool · default';
   if (defaultUrl) return 'URL · default';
   return 'No URL configured';
@@ -92,14 +94,15 @@ const S = {
   coList: { display: 'flex', flexDirection: 'column' as const, gap: 5 } as React.CSSProperties,
 
   coRow: (status: CompanyStatus) => ({
-    background: status === 'needs-url' ? '#110d08' : 'var(--bg-surface)',
+    background: (status === 'needs-url' || status === 'quarter-mismatch') ? '#110d08' : 'var(--bg-surface)',
     border: `0.5px solid ${
-      status === 'needs-url' ? 'rgba(201,120,76,0.33)'
-      : status === 'review' ? 'rgba(201,168,76,0.27)'
-      : status === 'ingested' ? 'rgba(74,154,106,0.2)'
+      status === 'needs-url'        ? 'rgba(201,120,76,0.33)'
+      : status === 'quarter-mismatch' ? 'rgba(201,120,76,0.33)'
+      : status === 'review'         ? 'rgba(201,168,76,0.27)'
+      : status === 'ingested'       ? 'rgba(74,154,106,0.2)'
       : 'var(--border)'
     }`,
-    borderRadius: status === 'needs-url' ? '8px 8px 0 0' : 8,
+    borderRadius: (status === 'needs-url' || status === 'quarter-mismatch') ? '8px 8px 0 0' : 8,
     padding: '10px 14px',
     display: 'grid',
     gridTemplateColumns: '72px 90px 1fr 90px 80px',
@@ -119,18 +122,20 @@ const S = {
 
 function Badge({ status }: { status: CompanyStatus }) {
   const styles: Record<CompanyStatus, React.CSSProperties> = {
-    idle:       { background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)' },
-    running:    { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
-    ingested:   { background: '#0a160e', color: '#4a9a6a', border: '0.5px solid rgba(74,154,106,0.27)' },
-    review:     { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
-    'needs-url': { background: '#16100a', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.27)' },
+    idle:               { background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)' },
+    running:            { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
+    ingested:           { background: '#0a160e', color: '#4a9a6a', border: '0.5px solid rgba(74,154,106,0.27)' },
+    review:             { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
+    'needs-url':        { background: '#16100a', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.27)' },
+    'quarter-mismatch': { background: '#16100a', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.27)' },
   };
   const labels: Record<CompanyStatus, React.ReactNode> = {
-    idle: 'idle',
-    running: <><AnimDot />running</>,
-    ingested: '✓ ingested',
-    review: '! review',
-    'needs-url': 'needs url',
+    idle:               'idle',
+    running:            <><AnimDot />running</>,
+    ingested:           '✓ ingested',
+    review:             '! review',
+    'needs-url':        'needs url',
+    'quarter-mismatch': '! mismatch',
   };
   return (
     <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap', textAlign: 'center', ...styles[status] }}>
@@ -153,21 +158,23 @@ function Action({ status, onRun, onResolve, onFix, onView }: {
   onView: () => void;
 }) {
   const base: React.CSSProperties = { fontSize: 10, color: 'var(--text-muted)', textAlign: 'right', cursor: 'pointer', background: 'none', border: 'none' };
-  if (status === 'idle')       return <button style={{ ...base, color: 'var(--gold)' }} onClick={onRun}>run →</button>;
-  if (status === 'running')    return <span style={{ ...base, color: 'var(--text-ghost)' }}>—</span>;
-  if (status === 'ingested')   return <button style={{ ...base, color: '#4a7fa5' }} onClick={onView}>view →</button>;
-  if (status === 'review')     return <button style={{ ...base, color: 'var(--gold)' }} onClick={onResolve}>resolve →</button>;
-  if (status === 'needs-url')  return <button style={{ ...base, color: 'var(--gold)' }} onClick={onFix}>fix →</button>;
+  if (status === 'idle')             return <button style={{ ...base, color: 'var(--gold)' }} onClick={onRun}>run →</button>;
+  if (status === 'running')          return <span style={{ ...base, color: 'var(--text-ghost)' }}>—</span>;
+  if (status === 'ingested')         return <button style={{ ...base, color: '#4a7fa5' }} onClick={onView}>view →</button>;
+  if (status === 'review')           return <button style={{ ...base, color: 'var(--gold)' }} onClick={onResolve}>resolve →</button>;
+  if (status === 'needs-url')        return <button style={{ ...base, color: 'var(--gold)' }} onClick={onFix}>fix →</button>;
+  if (status === 'quarter-mismatch') return <span style={{ ...base, color: 'var(--text-ghost)' }}>—</span>;
   return null;
 }
 
 // ── URL expansion panel ───────────────────────────────────────────────────────
 
-function UrlPanel({ defaultUrl, urlOverride, onChange, onRetry }: {
+function UrlPanel({ defaultUrl, urlOverride, onChange, onRetry, quarter }: {
   defaultUrl: string;
   urlOverride: string;
   onChange: (v: string) => void;
   onRetry: () => void;
+  quarter: string;
 }) {
   return (
     <div style={{
@@ -182,7 +189,7 @@ function UrlPanel({ defaultUrl, urlOverride, onChange, onRetry }: {
           background: '#161410', border: '0.5px solid rgba(201,120,76,0.27)',
           borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', flex: 1, outline: 'none',
         }}
-        placeholder="paste a direct URL to the transcript"
+        placeholder={defaultUrl ? 'override transcript URL' : `Paste transcript URL for ${quarter}`}
         value={urlOverride}
         onChange={e => onChange(e.target.value)}
       />
@@ -205,6 +212,49 @@ function UrlPanel({ defaultUrl, urlOverride, onChange, onRetry }: {
         }}
       >
         retry
+      </button>
+    </div>
+  );
+}
+
+// ── Quarter mismatch panel ────────────────────────────────────────────────────
+
+function QuarterMismatchPanel({ selectedQuarter, transcriptQuarter, onProceed, onCancel }: {
+  selectedQuarter: string;
+  transcriptQuarter: string;
+  onProceed: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div style={{
+      background: '#110d08', border: '0.5px solid rgba(201,120,76,0.2)',
+      borderTop: 'none', borderRadius: '0 0 8px 8px',
+      padding: '10px 14px', marginTop: 0, marginBottom: 0,
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <span style={{ fontSize: 11, color: '#c9784c' }}>⚠</span>
+      <span style={{ fontSize: 10, color: '#d4c090', flex: 1 }}>
+        Transcript looks like <strong style={{ color: '#c9784c' }}>{transcriptQuarter}</strong> but you selected <strong style={{ color: 'var(--gold)' }}>{selectedQuarter}</strong> — proceed anyway?
+      </span>
+      <button
+        onClick={onProceed}
+        style={{
+          fontSize: 9, padding: '3px 10px', borderRadius: 3, cursor: 'pointer',
+          background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Proceed
+      </button>
+      <button
+        onClick={onCancel}
+        style={{
+          fontSize: 9, padding: '3px 10px', borderRadius: 3, cursor: 'pointer',
+          background: 'transparent', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.27)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Cancel
       </button>
     </div>
   );
@@ -291,44 +341,58 @@ function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function IngestPage() {
-  const [quarter, setQuarter] = useState('Q1 2026');
+  const [quarter, setQuarter] = useState(CURRENT_QUARTER);
   const [selectedTicker, setSelectedTicker] = useState('all');
   const [companies, setCompanies] = useState<Record<string, CompanyState>>({});
   const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const [isLocal, setIsLocal] = useState(true);
   const divergenceRef = useRef<HTMLDivElement>(null);
 
+  // Cache config URLs from the first successful load so quarter changes don't
+  // restore the current-quarter URLs when ingesting historical data.
+  const configUrlsRef = useRef<Record<string, string>>({});
+
   // Detect environment on mount
   useEffect(() => {
     setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   }, []);
 
-  // Load config on mount
+  // Reload company states whenever the quarter changes.
+  // For non-current quarters, defaultUrl is cleared so the config URL (which
+  // always points to the latest transcript) can never silently supply wrong data.
   useEffect(() => {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(data => {
-        const configMap: Record<string, { defaultUrl: string; notes: string }> = {};
-        for (const row of data.config || []) {
-          configMap[row.ticker] = { defaultUrl: row.default_url ?? '', notes: row.notes ?? '' };
+        // Seed the ref once; subsequent calls use the cached values.
+        if (Object.keys(configUrlsRef.current).length === 0) {
+          for (const row of data.config || []) {
+            configUrlsRef.current[row.ticker] = row.default_url ?? '';
+          }
         }
 
         const ingestedTickers = new Set(
           (data.signals || [])
-            .filter((s: Record<string,string>) => s.quarter === quarter)
-            .map((s: Record<string,string>) => s.ticker)
+            .filter((s: Record<string, string>) => s.quarter === quarter)
+            .map((s: Record<string, string>) => s.ticker)
         );
 
+        const isHistorical = quarter !== CURRENT_QUARTER;
         const states: Record<string, CompanyState> = {};
         for (const ticker of COMPANY_ORDER) {
           const meta = BASE_META[ticker];
-          const cfg = configMap[ticker] ?? { defaultUrl: '', notes: '' };
+          const configUrl = configUrlsRef.current[ticker] ?? '';
+          // Historical quarters have no pre-filled URL — user must paste one.
+          const effectiveUrl = isHistorical ? '' : configUrl;
+
           states[ticker] = {
             ticker,
             name: meta.name,
             type: meta.type,
-            sourceLabel: sourceLabel(ticker, cfg.defaultUrl),
-            defaultUrl: cfg.defaultUrl,
+            sourceLabel: isHistorical
+              ? 'manual url required'
+              : sourceLabel(ticker, configUrl),
+            defaultUrl: effectiveUrl,
             status: ingestedTickers.has(ticker) ? 'ingested' : 'idle',
             urlOverride: '',
             showUrlInput: false,
@@ -355,11 +419,10 @@ export default function IngestPage() {
     setCompanies(prev => ({ ...prev, [ticker]: { ...prev[ticker], ...patch } }));
   }
 
-  async function runOne(ticker: string) {
+  async function runOne(ticker: string, opts: { proceedOnMismatch?: boolean } = {}) {
     const c = companies[ticker];
     if (!c || c.status === 'running') return;
 
-    // Show "fetching…" in source label while running
     update(ticker, {
       status: 'running',
       sourceLabel: c.sourceLabel.replace(/·.*$/, '· fetching…'),
@@ -369,7 +432,12 @@ export default function IngestPage() {
       const res = await fetch('/api/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, quarter, urlOverride: c.urlOverride || undefined }),
+        body: JSON.stringify({
+          ticker,
+          quarter,
+          urlOverride: c.urlOverride || undefined,
+          ...(opts.proceedOnMismatch ? { proceedOnMismatch: true } : {}),
+        }),
       });
       const data = await res.json();
 
@@ -378,6 +446,17 @@ export default function IngestPage() {
           status: 'ingested',
           transcriptUrl: data.transcriptUrl,
           sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetched ok'),
+        });
+      } else if (data.status === 'quarter-mismatch') {
+        // Blocking: user must explicitly click Proceed or Cancel.
+        update(ticker, {
+          status: 'quarter-mismatch',
+          transcriptQuarter: data.transcriptQuarter ?? '?',
+          transcriptUrl: data.transcriptUrl,
+          claudeData: data.claudeData,
+          oaiData: data.oaiData,
+          divergentFields: data.divergentFields,
+          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'quarter mismatch'),
         });
       } else if (data.status === 'review') {
         update(ticker, {
@@ -402,13 +481,33 @@ export default function IngestPage() {
           showUrlInput: true,
         });
       }
-    } catch (e) {
+    } catch {
       update(ticker, {
         status: 'needs-url',
         sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'error'),
         showUrlInput: true,
       });
     }
+  }
+
+  function proceedWithMismatch(ticker: string) {
+    runOne(ticker, { proceedOnMismatch: true });
+  }
+
+  function cancelMismatch(ticker: string) {
+    const c = companies[ticker];
+    if (!c) return;
+    update(ticker, {
+      status: 'idle',
+      transcriptQuarter: undefined,
+      transcriptUrl: undefined,
+      claudeData: undefined,
+      oaiData: undefined,
+      divergentFields: undefined,
+      sourceLabel: quarter !== CURRENT_QUARTER
+        ? 'manual url required'
+        : sourceLabel(ticker, c.defaultUrl),
+    });
   }
 
   function runAll() {
@@ -436,14 +535,11 @@ export default function IngestPage() {
     if (!c?.divergentFields) return;
 
     const sourceData = source === 'claude' ? c.claudeData : c.oaiData;
-    // Build merged fields: use source data as base, override divergent field
     const merged = { ...(c.claudeData || {}), [field]: sourceData?.[field] };
 
-    // Check if all divergent fields are now resolved
     const updatedFields = c.divergentFields.filter(f => f.field !== field);
 
     if (updatedFields.length === 0) {
-      // All resolved — save to signals
       try {
         await fetch('/api/ingest', {
           method: 'POST',
@@ -459,7 +555,6 @@ export default function IngestPage() {
         update(ticker, { status: 'ingested', divergentFields: [] });
         setResolveTarget(null);
       } catch {
-        // silent - show ingested anyway
         update(ticker, { status: 'ingested', divergentFields: [] });
         setResolveTarget(null);
       }
@@ -545,13 +640,22 @@ export default function IngestPage() {
                   onView={() => { if (c.transcriptUrl) window.open(c.transcriptUrl, '_blank'); }}
                 />
               </div>
-              {(c.status === 'needs-url' || c.showUrlInput) && (
+              {c.status === 'quarter-mismatch' && c.transcriptQuarter && (
+                <QuarterMismatchPanel
+                  selectedQuarter={quarter}
+                  transcriptQuarter={c.transcriptQuarter}
+                  onProceed={() => proceedWithMismatch(ticker)}
+                  onCancel={() => cancelMismatch(ticker)}
+                />
+              )}
+              {c.status !== 'quarter-mismatch' && (c.status === 'needs-url' || c.showUrlInput) && (
                 isLocal ? (
                   <UrlPanel
                     defaultUrl={c.defaultUrl}
                     urlOverride={c.urlOverride}
                     onChange={v => update(ticker, { urlOverride: v })}
                     onRetry={() => runOne(ticker)}
+                    quarter={quarter}
                   />
                 ) : null
               )}
