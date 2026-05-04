@@ -40,6 +40,62 @@ interface CompanyState {
 const QUARTERS = ['Q1 2026', 'Q4 2025', 'Q3 2025', 'Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024'];
 const COMPANY_ORDER = ['SSNLF', 'HXSCL', 'MU', 'SNDK', 'MSFT', 'GOOG', 'AMZN', 'META'];
 
+// Pre-confirmed Motley Fool transcript URLs per company per historical quarter.
+// Q1 2026 is omitted — the config tab always has the current-quarter URL.
+// SNDK's fiscal year is offset; Q4 2025 → SNDK Q2 FY2026, Q3 2025 → SNDK Q1 FY2026.
+// SSNLF/HXSCL have no Motley Fool historical transcripts — PDFs only.
+const TRANSCRIPT_URLS: Record<string, Record<string, string>> = {
+  MU: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2025/09/24/micron-mu-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/06/25/micron-mu-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/03/20/micron-technology-mu-q2-2025-earnings-call-transcr/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/12/18/micron-technology-mu-q1-2025-earnings-call-transcr/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/10/micron-technology-mu-q4-2024-earnings-call-transcr/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/06/26/micron-technology-mu-q3-2024-earnings-call-transcr/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/03/20/micron-technology-mu-q2-2024-earnings-call-transcr/',
+  },
+  SNDK: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/29/sandisk-sndk-q2-2026-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/30/sandisk-sndk-q1-2026-earnings-call-transcript/',
+  },
+  MSFT: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2025/08/05/microsoft-msft-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/04/30/microsoft-msft-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/microsoft-msft-q2-2025-earnings-call-transcript/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/microsoft-msft-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/30/microsoft-msft-q4-2024-earnings-call-transcript/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/04/25/microsoft-msft-q3-2024-earnings-call-transcript/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/01/30/microsoft-msft-q2-2024-earnings-call-transcript/',
+  },
+  GOOG: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/04/alphabet-googl-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/30/alphabet-goog-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/07/23/alphabet-googl-q2-2025-earnings-call-transcript/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/04/29/alphabet-googl-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/05/alphabet-goog-q4-2024-earnings-call-transcript/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/29/alphabet-googl-q3-2024-earnings-call-transcript/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/23/alphabet-googl-q2-2024-earnings-call-transcript/',
+  },
+  AMZN: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/05/amazon-amzn-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/31/amazon-amzn-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/08/01/amazon-amzn-q2-2025-earnings-call-transcript/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/05/01/amazon-amzn-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/06/amazoncom-amzn-q4-2024-earnings-call-transcript/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/31/amazoncom-amzn-q3-2024-earnings-call-transcript/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/08/01/amazoncom-amzn-q2-2024-earnings-call-transcript/',
+  },
+  META: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/28/meta-meta-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/29/meta-platforms-meta-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/07/30/meta-platforms-meta-q2-2025-earnings-call-transcript/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/04/30/meta-platforms-meta-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/meta-platforms-meta-q4-2024-earnings-call-transcri/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/meta-platforms-meta-q3-2024-earnings-call-transcri/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/31/meta-platforms-meta-q2-2024-earnings-call-transcript/',
+  },
+};
+
 const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
   SNDK:  { name: 'SanDisk',   type: 'vendor' },
   MU:    { name: 'Micron',    type: 'vendor' },
@@ -181,7 +237,7 @@ export default function IngestPage() {
             sourceLabel: sourceLabel(ticker, defaultUrl),
             defaultUrl,
             status: ingestedTickers.has(ticker) ? 'ingested' : 'idle',
-            urlOverride: '',
+            urlOverride: TRANSCRIPT_URLS[ticker]?.[quarter] ?? '',
           };
         }
         setCompanies(states);
@@ -194,7 +250,7 @@ export default function IngestPage() {
           states[ticker] = {
             ticker, name: meta.name, type: meta.type,
             sourceLabel: sourceLabel(ticker, ''), defaultUrl: '',
-            status: 'idle', urlOverride: '',
+            status: 'idle', urlOverride: TRANSCRIPT_URLS[ticker]?.[quarter] ?? '',
           };
         }
         setCompanies(states);
@@ -350,7 +406,16 @@ export default function IngestPage() {
         <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const }}>Quarter</span>
         <select
           value={quarter}
-          onChange={e => setQuarter(e.target.value)}
+          onChange={e => {
+            setQuarter(e.target.value);
+            setCompanies(prev => {
+              const next = { ...prev };
+              Object.keys(next).forEach(t => {
+                next[t] = { ...next[t], urlOverride: '' };
+              });
+              return next;
+            });
+          }}
           style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 95, outline: 'none' }}
         >
           {QUARTERS.map(q => <option key={q} value={q}>{q}</option>)}
