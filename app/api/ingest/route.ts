@@ -16,6 +16,7 @@ const COMPANY_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler
   META:  { name: 'Meta',      type: 'hyperscaler' },
 };
 
+// Fields saved to sheets
 interface ExtractedData {
   bit_growth_pct: number | null;
   capex_pct: number | null;
@@ -28,6 +29,12 @@ interface ExtractedData {
   asp_quote: string | null;
   inventory_quote: string | null;
   mgmt_tone_quote: string | null;
+}
+
+// Raw extraction — includes transcript quarter/year for mismatch detection
+interface RawExtraction extends ExtractedData {
+  transcript_quarter: string | null;
+  transcript_year: number | null;
 }
 
 interface DivergentField {
@@ -161,6 +168,8 @@ Extract ONLY what is explicitly stated. If a value is not mentioned, return null
 Return JSON only — no preamble, no markdown, no code block.
 
 {
+  "transcript_quarter": <"Q1" | "Q2" | "Q3" | "Q4" | null>,
+  "transcript_year": <4-digit year number or null>,
   "bit_growth_pct": <number or null>,
   "capex_pct": <number or null>,
   "asp_change_pct": <number or null>,
@@ -175,6 +184,8 @@ Return JSON only — no preamble, no markdown, no code block.
 }
 
 Fields:
+- transcript_quarter: which fiscal quarter is this call for (Q1, Q2, Q3, or Q4 as labelled in the transcript)
+- transcript_year: which calendar year is this call for (e.g. 2026)
 - bit_growth_pct: NAND bit shipment growth YoY %
 - capex_pct: CapEx change YoY % (for hyperscalers: total CapEx YoY %)
 - asp_change_pct: ASP change QoQ %
@@ -185,7 +196,7 @@ Fields:
 Transcript:
 ${text.substring(0, 70000)}`;
 
-async function extractWithClaude(ticker: string, text: string): Promise<ExtractedData | null> {
+async function extractWithClaude(ticker: string, text: string): Promise<RawExtraction | null> {
   try {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const msg = await anthropic.messages.create({
@@ -195,14 +206,14 @@ async function extractWithClaude(ticker: string, text: string): Promise<Extracte
     });
     const raw = msg.content[0].type === 'text' ? msg.content[0].text : '';
     const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    return JSON.parse(cleaned) as ExtractedData;
+    return JSON.parse(cleaned) as RawExtraction;
   } catch (e) {
     console.error('Claude extraction error:', e);
     return null;
   }
 }
 
-async function extractWithOAI(ticker: string, text: string): Promise<ExtractedData | null> {
+async function extractWithOAI(ticker: string, text: string): Promise<RawExtraction | null> {
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -219,11 +230,41 @@ async function extractWithOAI(ticker: string, text: string): Promise<ExtractedDa
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}`);
     const data = await res.json();
-    return JSON.parse(data.choices[0].message.content) as ExtractedData;
+    return JSON.parse(data.choices[0].message.content) as RawExtraction;
   } catch (e) {
     console.error('OpenAI extraction error:', e);
     return null;
   }
+}
+
+// Strip transcript_quarter/year before saving or returning to client
+function toExtractedData(raw: RawExtraction): ExtractedData {
+  return {
+    bit_growth_pct: raw.bit_growth_pct,
+    capex_pct: raw.capex_pct,
+    asp_change_pct: raw.asp_change_pct,
+    inventory_days: raw.inventory_days,
+    mgmt_tone_score: raw.mgmt_tone_score,
+    node_transition_note: raw.node_transition_note,
+    bit_growth_quote: raw.bit_growth_quote,
+    capex_quote: raw.capex_quote,
+    asp_quote: raw.asp_quote,
+    inventory_quote: raw.inventory_quote,
+    mgmt_tone_quote: raw.mgmt_tone_quote,
+  };
+}
+
+// Build "Q1 2026"-style string from raw extraction; returns null if malformed
+function buildExtractedQuarter(raw: RawExtraction | null): string | null {
+  if (!raw?.transcript_quarter || !raw?.transcript_year) return null;
+  const q = String(raw.transcript_quarter).toUpperCase().trim();
+  const y = String(raw.transcript_year).trim();
+  if (!/^Q[1-4]$/.test(q) || !/^\d{4}$/.test(y)) return null;
+  return `${q} ${y}`;
+}
+
+function quartersMatch(a: string, b: string): boolean {
+  return a.toUpperCase().replace(/\s+/g, ' ').trim() === b.toUpperCase().replace(/\s+/g, ' ').trim();
 }
 
 // ── Divergence detection ──────────────────────────────────────────────────────
@@ -318,7 +359,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // Resolve action — save after user picks values
+    // Resolve action — save after user picks divergent values
     if (body.action === 'resolve') {
       const { ticker, quarter, fields, transcriptUrl } = body;
       if (!ticker || !quarter || !fields) {
@@ -330,10 +371,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ingested', ticker, quarter });
     }
 
+    // Force-save action — user confirmed quarter mismatch, run divergence check and save
+    if (body.action === 'force-save') {
+      const { ticker, quarter, claudeData, oaiData, transcriptUrl } = body;
+      if (!ticker || !quarter || !transcriptUrl) {
+        return NextResponse.json({ error: 'ticker, quarter, transcriptUrl required' }, { status: 400 });
+      }
+      if (!claudeData && !oaiData) {
+        return NextResponse.json({ error: 'No extraction data provided' }, { status: 400 });
+      }
+      const sheets = getSheets();
+      const runId = `run_${Date.now()}`;
+
+      if (!claudeData || !oaiData) {
+        const extracted = (claudeData ?? oaiData) as ExtractedData;
+        await saveSignalRow(sheets, ticker, quarter, extracted, transcriptUrl, runId);
+        return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl });
+      }
+
+      const divergentFields = findDivergences(claudeData as ExtractedData, oaiData as ExtractedData);
+      if (divergentFields.length === 0) {
+        await saveSignalRow(sheets, ticker, quarter, claudeData as ExtractedData, transcriptUrl, runId);
+        return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl });
+      }
+      return NextResponse.json({ status: 'review', ticker, quarter, transcriptUrl, divergentFields, claudeData, oaiData });
+    }
+
     // Main ingest
     const { ticker, quarter, urlOverride } = body;
     if (!ticker || !quarter) {
       return NextResponse.json({ error: 'ticker and quarter required' }, { status: 400 });
+    }
+
+    // Production (Vercel) blocks auto-fetch, but always honour an explicit urlOverride
+    if (process.env.NODE_ENV === 'production' && !urlOverride) {
+      return NextResponse.json({
+        status: 'needs-url',
+        ticker,
+        quarter,
+        defaultUrl: '',
+        productionBlock: true,
+        message: 'Ingest must be run locally — run scripts/start-ingest.sh',
+      });
     }
 
     const meta = COMPANY_META[ticker];
@@ -373,16 +452,32 @@ export async function POST(req: NextRequest) {
     }
 
     // Dual extraction — Claude + OpenAI in parallel
-    const [claudeResult, oaiResult] = await Promise.all([
+    const [claudeRaw, oaiRaw] = await Promise.all([
       extractWithClaude(ticker, fetched.text),
       extractWithOAI(ticker, fetched.text),
     ]);
 
-    if (!claudeResult && !oaiResult) {
+    if (!claudeRaw && !oaiRaw) {
       return NextResponse.json({ error: 'Both extractions failed', ticker }, { status: 500 });
     }
 
-    // If only one succeeded, use it directly
+    // Quarter mismatch check — use Claude's result first, OAI as fallback
+    const extractedQuarter = buildExtractedQuarter(claudeRaw) ?? buildExtractedQuarter(oaiRaw);
+    if (extractedQuarter && !quartersMatch(extractedQuarter, quarter)) {
+      return NextResponse.json({
+        status: 'quarter-mismatch',
+        extractedQuarter,
+        selectedQuarter: quarter,
+        transcriptUrl: fetchUrl,
+        claudeData: claudeRaw ? toExtractedData(claudeRaw) : null,
+        oaiData: oaiRaw ? toExtractedData(oaiRaw) : null,
+      });
+    }
+
+    const claudeResult = claudeRaw ? toExtractedData(claudeRaw) : null;
+    const oaiResult = oaiRaw ? toExtractedData(oaiRaw) : null;
+
+    // If only one extraction succeeded, save directly
     if (!claudeResult || !oaiResult) {
       const extracted = claudeResult ?? oaiResult!;
       const runId = `run_${Date.now()}`;
@@ -390,7 +485,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl: fetchUrl, extracted });
     }
 
-    // Compare
+    // Divergence check
     const divergentFields = findDivergences(claudeResult, oaiResult);
 
     if (divergentFields.length === 0) {
@@ -399,7 +494,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl: fetchUrl, extracted: claudeResult });
     }
 
-    // Divergence — don't write yet, send back for review
+    // Divergence — return for review without saving
     return NextResponse.json({
       status: 'review',
       ticker,
