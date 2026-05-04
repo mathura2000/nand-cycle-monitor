@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review' | 'needs-url';
+type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review';
 
 interface DivergentField {
   field: string;
@@ -22,7 +22,6 @@ interface CompanyState {
   defaultUrl: string;
   status: CompanyStatus;
   urlOverride: string;
-  showUrlInput: boolean;
   transcriptUrl?: string;
   divergentFields?: DivergentField[];
   claudeData?: Record<string, unknown>;
@@ -44,181 +43,40 @@ const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }
 
 function sourceLabel(ticker: string, defaultUrl: string): string {
   if (ticker === 'SSNLF') return 'Samsung IR PDF · auto-pattern';
-  if (ticker === 'HXSCL') return 'Yahoo Finance · browser only';
-  if (defaultUrl.includes('yahoo.com')) return 'Yahoo Finance · browser only';
-  if (defaultUrl.includes('fool.com')) return 'Motley Fool · default';
-  if (defaultUrl) return 'URL · default';
-  return 'No URL configured';
+  if (defaultUrl.includes('yahoo.com')) return 'Yahoo Finance';
+  if (defaultUrl.includes('fool.com')) return 'Motley Fool';
+  if (defaultUrl.includes('gurufocus')) return 'GuruFocus';
+  if (defaultUrl) return 'URL';
+  return '—';
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────────────
-
-const S = {
-  page: { background: 'var(--bg-base)', minHeight: '100vh' } as React.CSSProperties,
-
-  runBar: {
-    background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-    borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center',
-    gap: 10, marginBottom: 14,
-  } as React.CSSProperties,
-
-  rbLabel: {
-    fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em',
-    textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const,
-  } as React.CSSProperties,
-
-  quarterInput: {
-    background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5,
-    color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 80, outline: 'none',
-  } as React.CSSProperties,
-
-  companySelect: {
-    background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5,
-    color: 'var(--gold)', fontSize: 11, padding: '5px 8px', width: 160, outline: 'none',
-  } as React.CSSProperties,
-
-  btnAll: {
-    fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const,
-    padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const,
-    background: '#1e1c18', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)',
-  } as React.CSSProperties,
-
-  btnSel: {
-    fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const,
-    padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const,
-    background: 'var(--gold)', color: '#0e0c09', border: 'none',
-  } as React.CSSProperties,
-
-  coList: { display: 'flex', flexDirection: 'column' as const, gap: 5 } as React.CSSProperties,
-
-  coRow: (status: CompanyStatus) => ({
-    background: status === 'needs-url' ? '#110d08' : 'var(--bg-surface)',
-    border: `0.5px solid ${
-      status === 'needs-url' ? 'rgba(201,120,76,0.33)'
-      : status === 'review' ? 'rgba(201,168,76,0.27)'
-      : status === 'ingested' ? 'rgba(74,154,106,0.2)'
-      : 'var(--border)'
-    }`,
-    borderRadius: status === 'needs-url' ? '8px 8px 0 0' : 8,
-    padding: '10px 14px',
-    display: 'grid',
-    gridTemplateColumns: '72px 90px 1fr 90px 80px',
-    alignItems: 'center',
-    gap: 10,
-  }) as React.CSSProperties,
-
-  coTicker: { fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' } as React.CSSProperties,
-  coName: { fontSize: 10, color: 'var(--text-muted)' } as React.CSSProperties,
-  coSource: (warn: boolean) => ({
-    fontSize: 9, color: warn ? 'rgba(201,120,76,0.53)' : 'var(--text-ghost)',
-    whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis',
-  }) as React.CSSProperties,
-};
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
 
 function Badge({ status }: { status: CompanyStatus }) {
   const styles: Record<CompanyStatus, React.CSSProperties> = {
-    idle:       { background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)' },
-    running:    { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
-    ingested:   { background: '#0a160e', color: '#4a9a6a', border: '0.5px solid rgba(74,154,106,0.27)' },
-    review:     { background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' },
-    'needs-url': { background: '#16100a', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.27)' },
+    idle:     { background: '#161410', color: 'var(--text-muted)',  border: '0.5px solid var(--border)' },
+    running:  { background: '#16120a', color: 'var(--gold)',        border: '0.5px solid rgba(201,168,76,0.27)' },
+    ingested: { background: '#0a160e', color: '#4a9a6a',            border: '0.5px solid rgba(74,154,106,0.27)' },
+    review:   { background: '#16120a', color: 'var(--gold)',        border: '0.5px solid rgba(201,168,76,0.27)' },
   };
   const labels: Record<CompanyStatus, React.ReactNode> = {
-    idle: 'idle',
-    running: <><AnimDot />running</>,
+    idle:     'idle',
+    running:  <><AnimDot />running</>,
     ingested: '✓ ingested',
-    review: '! review',
-    'needs-url': 'needs url',
+    review:   '! review',
   };
   return (
-    <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap', textAlign: 'center', ...styles[status] }}>
+    <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap', ...styles[status] }}>
       {labels[status]}
     </span>
   );
 }
 
 function AnimDot() {
-  return <span style={{ display: 'inline-block', marginRight: 4, animation: 'pulseDot 1.2s ease-in-out infinite' }}>·</span>;
-}
-
-// ── Action cell ───────────────────────────────────────────────────────────────
-
-function Action({ status, onRun, onResolve, onFix, onView }: {
-  status: CompanyStatus;
-  onRun: () => void;
-  onResolve: () => void;
-  onFix: () => void;
-  onView: () => void;
-}) {
-  const base: React.CSSProperties = { fontSize: 10, color: 'var(--text-muted)', textAlign: 'right', cursor: 'pointer', background: 'none', border: 'none' };
-  if (status === 'idle')       return <button style={{ ...base, color: 'var(--gold)' }} onClick={onRun}>run →</button>;
-  if (status === 'running')    return <span style={{ ...base, color: 'var(--text-ghost)' }}>—</span>;
-  if (status === 'ingested')   return <button style={{ ...base, color: '#4a7fa5' }} onClick={onView}>view →</button>;
-  if (status === 'review')     return <button style={{ ...base, color: 'var(--gold)' }} onClick={onResolve}>resolve →</button>;
-  if (status === 'needs-url')  return <button style={{ ...base, color: 'var(--gold)' }} onClick={onFix}>fix →</button>;
-  return null;
-}
-
-// ── URL expansion panel ───────────────────────────────────────────────────────
-
-function UrlPanel({ defaultUrl, urlOverride, onChange, onRetry }: {
-  defaultUrl: string;
-  urlOverride: string;
-  onChange: (v: string) => void;
-  onRetry: () => void;
-}) {
-  return (
-    <div style={{
-      background: '#110d08', border: '0.5px solid rgba(201,120,76,0.2)',
-      borderTop: 'none', borderRadius: '0 0 8px 8px',
-      padding: '8px 14px', marginTop: 0, marginBottom: 0,
-      display: 'flex', alignItems: 'center', gap: 8,
-    }}>
-      <span style={{ fontSize: 9, color: '#c9784c', whiteSpace: 'nowrap' }}>Working URL:</span>
-      <input
-        style={{
-          background: '#161410', border: '0.5px solid rgba(201,120,76,0.27)',
-          borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', flex: 1, outline: 'none',
-        }}
-        placeholder="paste a direct URL to the transcript"
-        value={urlOverride}
-        onChange={e => onChange(e.target.value)}
-      />
-      {defaultUrl && (
-        <a
-          href={defaultUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ fontSize: 9, color: '#4a7fa5', textDecoration: 'underline', whiteSpace: 'nowrap', cursor: 'pointer' }}
-        >
-          open source in browser →
-        </a>
-      )}
-      <button
-        onClick={onRetry}
-        style={{
-          fontSize: 9, color: 'var(--gold)', padding: '3px 10px',
-          border: '0.5px solid rgba(201,168,76,0.27)', borderRadius: 3,
-          background: '#16120a', cursor: 'pointer',
-        }}
-      >
-        retry
-      </button>
-    </div>
-  );
+  return <span style={{ display: 'inline-block', marginRight: 3, animation: 'pulseDot 1.2s ease-in-out infinite' }}>·</span>;
 }
 
 // ── Divergence panel ──────────────────────────────────────────────────────────
-
-const FIELD_LABELS: Record<string, string> = {
-  bit_growth_pct: 'bit_growth_pct',
-  capex_pct: 'capex_pct',
-  asp_change_pct: 'asp_change_pct',
-  inventory_days: 'inventory_days',
-  mgmt_tone_score: 'mgmt_tone_score',
-};
 
 function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
   ticker: string;
@@ -228,26 +86,18 @@ function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
   onUseOAI: (field: string) => void;
 }) {
   return (
-    <div style={{
-      background: '#0f0e08', border: '0.5px solid rgba(201,168,76,0.2)',
-      borderRadius: 8, padding: '14px 16px', marginTop: 12,
-    }}>
+    <div style={{ background: '#0f0e08', border: '0.5px solid rgba(201,168,76,0.2)', borderRadius: 8, padding: '14px 16px', marginTop: 12 }}>
       <div style={{ fontSize: 9, color: 'var(--gold)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
         {name} ({ticker}) · resolve divergence
       </div>
-
-      {/* Header row */}
       <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 6, marginBottom: 6 }}>
         <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6a6058' }}>Field</span>
         <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--gold)' }}>Claude</span>
         <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#4a7fa5' }}>OpenAI</span>
       </div>
-
       {fields.map(f => (
         <div key={f.field} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 6, marginBottom: 10 }}>
-          <span style={{ fontSize: 10, color: '#6a6058', paddingTop: 2 }}>{FIELD_LABELS[f.field] ?? f.field}</span>
-
-          {/* Claude column */}
+          <span style={{ fontSize: 10, color: '#6a6058', paddingTop: 2 }}>{f.field}</span>
           <div>
             <div style={{ fontSize: 10, color: 'var(--gold)' }}>
               {f.claudeValue != null ? String(f.claudeValue) + (f.field.includes('pct') ? '%' : f.field === 'mgmt_tone_score' ? ' / 5' : '') : '—'}
@@ -257,15 +107,10 @@ function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
                 &ldquo;{f.claudeQuote.substring(0, 100)}{f.claudeQuote.length > 100 ? '…' : ''}&rdquo;
               </div>
             )}
-            <button
-              onClick={() => onUseClaude(f.field)}
-              style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' }}
-            >
+            <button onClick={() => onUseClaude(f.field)} style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' }}>
               use Claude →
             </button>
           </div>
-
-          {/* OpenAI column */}
           <div>
             <div style={{ fontSize: 10, color: '#4a7fa5' }}>
               {f.oaiValue != null ? String(f.oaiValue) + (f.field.includes('pct') ? '%' : f.field === 'mgmt_tone_score' ? ' / 5' : '') : '—'}
@@ -275,10 +120,7 @@ function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
                 &ldquo;{f.oaiQuote.substring(0, 100)}{f.oaiQuote.length > 100 ? '…' : ''}&rdquo;
               </div>
             )}
-            <button
-              onClick={() => onUseOAI(f.field)}
-              style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#0a0f16', color: '#4a7fa5', border: '0.5px solid rgba(74,127,165,0.27)' }}
-            >
+            <button onClick={() => onUseOAI(f.field)} style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#0a0f16', color: '#4a7fa5', border: '0.5px solid rgba(74,127,165,0.27)' }}>
               use OpenAI →
             </button>
           </div>
@@ -294,57 +136,50 @@ export default function IngestPage() {
   const [quarter, setQuarter] = useState('Q1 2026');
   const [selectedTicker, setSelectedTicker] = useState('all');
   const [companies, setCompanies] = useState<Record<string, CompanyState>>({});
-  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const [isLocal, setIsLocal] = useState(true);
+  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
   const divergenceRef = useRef<HTMLDivElement>(null);
 
-  // Detect environment on mount
   useEffect(() => {
     setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   }, []);
 
-  // Load config on mount
+  // Load config + check already-ingested on mount / quarter change
   useEffect(() => {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(data => {
-        const configMap: Record<string, { defaultUrl: string; notes: string }> = {};
+        const configMap: Record<string, string> = {};
         for (const row of data.config || []) {
-          configMap[row.ticker] = { defaultUrl: row.default_url ?? '', notes: row.notes ?? '' };
+          configMap[row.ticker] = row.default_url ?? '';
         }
-
         const ingestedTickers = new Set(
           (data.signals || [])
-            .filter((s: Record<string,string>) => s.quarter === quarter)
-            .map((s: Record<string,string>) => s.ticker)
+            .filter((s: Record<string, string>) => s.quarter === quarter)
+            .map((s: Record<string, string>) => s.ticker)
         );
-
         const states: Record<string, CompanyState> = {};
         for (const ticker of COMPANY_ORDER) {
           const meta = BASE_META[ticker];
-          const cfg = configMap[ticker] ?? { defaultUrl: '', notes: '' };
+          const defaultUrl = configMap[ticker] ?? '';
           states[ticker] = {
-            ticker,
-            name: meta.name,
-            type: meta.type,
-            sourceLabel: sourceLabel(ticker, cfg.defaultUrl),
-            defaultUrl: cfg.defaultUrl,
+            ticker, name: meta.name, type: meta.type,
+            sourceLabel: sourceLabel(ticker, defaultUrl),
+            defaultUrl,
             status: ingestedTickers.has(ticker) ? 'ingested' : 'idle',
             urlOverride: '',
-            showUrlInput: false,
           };
         }
         setCompanies(states);
       })
       .catch(() => {
-        // Fallback: build states from static meta
         const states: Record<string, CompanyState> = {};
         for (const ticker of COMPANY_ORDER) {
           const meta = BASE_META[ticker];
           states[ticker] = {
             ticker, name: meta.name, type: meta.type,
             sourceLabel: sourceLabel(ticker, ''), defaultUrl: '',
-            status: 'idle', urlOverride: '', showUrlInput: false,
+            status: 'idle', urlOverride: '',
           };
         }
         setCompanies(states);
@@ -359,11 +194,7 @@ export default function IngestPage() {
     const c = companies[ticker];
     if (!c || c.status === 'running') return;
 
-    // Show "fetching…" in source label while running
-    update(ticker, {
-      status: 'running',
-      sourceLabel: c.sourceLabel.replace(/·.*$/, '· fetching…'),
-    });
+    update(ticker, { status: 'running' });
 
     try {
       const res = await fetch('/api/ingest', {
@@ -374,11 +205,7 @@ export default function IngestPage() {
       const data = await res.json();
 
       if (data.status === 'ingested') {
-        update(ticker, {
-          status: 'ingested',
-          transcriptUrl: data.transcriptUrl,
-          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetched ok'),
-        });
+        update(ticker, { status: 'ingested', transcriptUrl: data.transcriptUrl });
       } else if (data.status === 'review') {
         update(ticker, {
           status: 'review',
@@ -386,175 +213,146 @@ export default function IngestPage() {
           divergentFields: data.divergentFields,
           claudeData: data.claudeData,
           oaiData: data.oaiData,
-          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetched ok'),
         });
         setResolveTarget(ticker);
-      } else if (data.status === 'needs-url') {
-        update(ticker, {
-          status: 'needs-url',
-          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'IP blocked'),
-          showUrlInput: true,
-        });
+        setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
       } else {
-        update(ticker, {
-          status: 'needs-url',
-          sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'fetch failed'),
-          showUrlInput: true,
-        });
+        update(ticker, { status: 'idle' });
       }
-    } catch (e) {
-      update(ticker, {
-        status: 'needs-url',
-        sourceLabel: sourceLabel(ticker, c.defaultUrl).replace('default', 'error'),
-        showUrlInput: true,
-      });
+    } catch {
+      update(ticker, { status: 'idle' });
     }
   }
 
   function runAll() {
-    const toRun = COMPANY_ORDER.filter(t => companies[t]?.status !== 'ingested');
-    toRun.forEach(t => runOne(t));
-  }
-
-  function runSelected() {
-    if (selectedTicker === 'all') {
-      runAll();
-    } else {
-      runOne(selectedTicker);
-    }
-  }
-
-  function scrollToResolve(ticker: string) {
-    setResolveTarget(ticker);
-    setTimeout(() => {
-      divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
+    COMPANY_ORDER.filter(t => companies[t]?.status !== 'ingested').forEach(t => runOne(t));
   }
 
   async function resolveField(ticker: string, field: string, source: 'claude' | 'oai') {
     const c = companies[ticker];
     if (!c?.divergentFields) return;
-
     const sourceData = source === 'claude' ? c.claudeData : c.oaiData;
-    // Build merged fields: use source data as base, override divergent field
     const merged = { ...(c.claudeData || {}), [field]: sourceData?.[field] };
+    const remaining = c.divergentFields.filter(f => f.field !== field);
 
-    // Check if all divergent fields are now resolved
-    const updatedFields = c.divergentFields.filter(f => f.field !== field);
-
-    if (updatedFields.length === 0) {
-      // All resolved — save to signals
+    if (remaining.length === 0) {
       try {
         await fetch('/api/ingest', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'resolve',
-            ticker,
-            quarter,
-            fields: merged,
-            transcriptUrl: c.transcriptUrl ?? '',
-          }),
+          body: JSON.stringify({ action: 'resolve', ticker, quarter, fields: merged, transcriptUrl: c.transcriptUrl ?? '' }),
         });
-        update(ticker, { status: 'ingested', divergentFields: [] });
-        setResolveTarget(null);
-      } catch {
-        // silent - show ingested anyway
-        update(ticker, { status: 'ingested', divergentFields: [] });
-        setResolveTarget(null);
-      }
+      } catch { /* silent */ }
+      update(ticker, { status: 'ingested', divergentFields: [] });
+      setResolveTarget(null);
     } else {
-      update(ticker, {
-        claudeData: merged,
-        divergentFields: updatedFields,
-      });
+      update(ticker, { claudeData: merged, divergentFields: remaining });
     }
   }
 
   const reviewCompany = resolveTarget ? companies[resolveTarget] : null;
   const anyRunning = Object.values(companies).some(c => c.status === 'running');
 
-  return (
-    <div style={S.page}>
-      <style>{`
-        @keyframes pulseDot {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.25; }
-        }
-      `}</style>
+  // Row border color by status
+  function rowBorder(status: CompanyStatus) {
+    if (status === 'ingested') return 'rgba(74,154,106,0.2)';
+    if (status === 'review')   return 'rgba(201,168,76,0.27)';
+    return 'var(--border)';
+  }
 
-      {/* Production banner — shown on Vercel, hidden on localhost */}
+  return (
+    <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
+      <style>{`@keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.25} }`}</style>
+
+      {/* Production banner */}
       {!isLocal && (
-        <div style={{
-          background: '#16120a', border: '0.5px solid rgba(201,168,76,0.4)',
-          borderRadius: 8, padding: '12px 16px', marginBottom: 14,
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <span style={{ fontSize: 12, color: 'var(--gold)' }}>⚠</span>
-          <span style={{ fontSize: 11, color: '#d4c090' }}>
-            Ingest is disabled on Vercel — transcript sites block data center IPs.
-          </span>
+        <div style={{ background: '#16120a', border: '0.5px solid rgba(201,168,76,0.4)', borderRadius: 8, padding: '12px 16px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 11, color: '#d4c090' }}>⚠ Ingest is disabled on Vercel — transcript sites block data center IPs.</span>
           <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-            Run <code style={{ background: '#1e1c18', padding: '1px 5px', borderRadius: 3, fontSize: 10, color: 'var(--gold)' }}>scripts/start-ingest.sh</code> on your local machine to ingest.
+            Run <code style={{ background: '#1e1c18', padding: '1px 5px', borderRadius: 3, fontSize: 10, color: 'var(--gold)' }}>scripts/start-ingest.sh</code> locally.
           </span>
         </div>
       )}
 
       {/* Run bar */}
-      <div style={S.runBar}>
-        <span style={S.rbLabel}>Quarter</span>
+      <div style={{ background: 'var(--bg-surface)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const }}>Quarter</span>
         <input
-          style={S.quarterInput}
           value={quarter}
           onChange={e => setQuarter(e.target.value)}
+          style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 80, outline: 'none' }}
         />
-        <span style={{ ...S.rbLabel, marginLeft: 8 }}>Company</span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, marginLeft: 8 }}>Company</span>
         <select
-          style={S.companySelect}
           value={selectedTicker}
           onChange={e => setSelectedTicker(e.target.value)}
+          style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: 'var(--gold)', fontSize: 11, padding: '5px 8px', width: 160, outline: 'none' }}
         >
           <option value="all">All 8 companies</option>
-          {COMPANY_ORDER.map(t => (
-            <option key={t} value={t}>{companies[t]?.name ?? t} ({t})</option>
-          ))}
+          {COMPANY_ORDER.map(t => <option key={t} value={t}>{companies[t]?.name ?? t} ({t})</option>)}
         </select>
-        <button style={S.btnAll} onClick={runAll} disabled={anyRunning}>Run all</button>
-        <button style={S.btnSel} onClick={runSelected} disabled={anyRunning}>Run selected</button>
+        <button
+          onClick={runAll}
+          disabled={anyRunning}
+          style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const, padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const, background: '#1e1c18', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' }}
+        >
+          Run all
+        </button>
+        <button
+          onClick={() => selectedTicker === 'all' ? runAll() : runOne(selectedTicker)}
+          disabled={anyRunning}
+          style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const, padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const, background: 'var(--gold)', color: '#0e0c09', border: 'none' }}
+        >
+          Run selected
+        </button>
       </div>
 
       {/* Company list */}
-      <div style={S.coList}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {COMPANY_ORDER.map(ticker => {
           const c = companies[ticker];
           if (!c) return null;
-          const isBlocked = c.sourceLabel.includes('blocked') || c.sourceLabel.includes('failed') || c.sourceLabel.includes('error');
 
           return (
-            <div key={ticker}>
-              <div style={S.coRow(c.status)}>
-                <span style={S.coTicker}>{ticker}</span>
-                <span style={S.coName}>{c.name}</span>
-                <span style={S.coSource(isBlocked)}>{c.sourceLabel}</span>
+            <div key={ticker} style={{ background: 'var(--bg-surface)', border: `0.5px solid ${rowBorder(c.status)}`, borderRadius: 8, padding: '10px 14px' }}>
+
+              {/* Top line: ticker · name · source · badge · view link */}
+              <div style={{ display: 'grid', gridTemplateColumns: '72px 90px 1fr 90px 60px', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' }}>{ticker}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{c.name}</span>
+                <span style={{ fontSize: 9, color: 'var(--text-ghost)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{c.sourceLabel}</span>
                 <Badge status={c.status} />
-                <Action
-                  status={c.status}
-                  onRun={() => runOne(ticker)}
-                  onResolve={() => scrollToResolve(ticker)}
-                  onFix={() => update(ticker, { showUrlInput: !c.showUrlInput })}
-                  onView={() => { if (c.transcriptUrl) window.open(c.transcriptUrl, '_blank'); }}
-                />
+                {c.status === 'ingested' && c.transcriptUrl
+                  ? <button onClick={() => window.open(c.transcriptUrl, '_blank')} style={{ fontSize: 10, color: '#4a7fa5', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'right' as const }}>view →</button>
+                  : c.status === 'review'
+                  ? <button onClick={() => { setResolveTarget(ticker); setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} style={{ fontSize: 10, color: 'var(--gold)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'right' as const }}>resolve →</button>
+                  : <span />
+                }
               </div>
-              {(c.status === 'needs-url' || c.showUrlInput) && (
-                isLocal ? (
-                  <UrlPanel
-                    defaultUrl={c.defaultUrl}
-                    urlOverride={c.urlOverride}
-                    onChange={v => update(ticker, { urlOverride: v })}
-                    onRetry={() => runOne(ticker)}
-                  />
-                ) : null
-              )}
+
+              {/* Bottom line: open → · url input · run → */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                {c.defaultUrl && (
+                  <a href={c.defaultUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 9, color: '#4a7fa5', textDecoration: 'underline', whiteSpace: 'nowrap' as const }}>
+                    open →
+                  </a>
+                )}
+                <input
+                  placeholder="paste working URL here"
+                  value={c.urlOverride}
+                  onChange={e => update(ticker, { urlOverride: e.target.value })}
+                  style={{ flex: 1, background: '#161410', border: '0.5px solid #2a2520', borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', outline: 'none' }}
+                />
+                <button
+                  onClick={() => runOne(ticker)}
+                  disabled={c.status === 'running'}
+                  style={{ fontSize: 9, color: c.status === 'running' ? 'var(--text-ghost)' : 'var(--gold)', padding: '3px 10px', border: '0.5px solid rgba(201,168,76,0.27)', borderRadius: 3, background: '#16120a', cursor: c.status === 'running' ? 'default' : 'pointer', whiteSpace: 'nowrap' as const }}
+                >
+                  {c.status === 'running' ? '…' : 'run →'}
+                </button>
+              </div>
+
             </div>
           );
         })}
