@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review';
+type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review' | 'quarter-mismatch';
 
 interface DivergentField {
   field: string;
@@ -12,6 +12,14 @@ interface DivergentField {
   oaiValue: number | string | null;
   claudeQuote: string | null;
   oaiQuote: string | null;
+}
+
+interface QuarterMismatchData {
+  extracted: string;
+  selected: string;
+  claudeData: Record<string, unknown>;
+  oaiData: Record<string, unknown>;
+  transcriptUrl: string;
 }
 
 interface CompanyState {
@@ -26,8 +34,10 @@ interface CompanyState {
   divergentFields?: DivergentField[];
   claudeData?: Record<string, unknown>;
   oaiData?: Record<string, unknown>;
+  quarterMismatch?: QuarterMismatchData;
 }
 
+const QUARTERS = ['Q1 2026', 'Q4 2025', 'Q3 2025', 'Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024'];
 const COMPANY_ORDER = ['SSNLF', 'HXSCL', 'MU', 'SNDK', 'MSFT', 'GOOG', 'AMZN', 'META'];
 
 const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
@@ -54,16 +64,18 @@ function sourceLabel(ticker: string, defaultUrl: string): string {
 
 function Badge({ status }: { status: CompanyStatus }) {
   const styles: Record<CompanyStatus, React.CSSProperties> = {
-    idle:     { background: '#161410', color: 'var(--text-muted)',  border: '0.5px solid var(--border)' },
-    running:  { background: '#16120a', color: 'var(--gold)',        border: '0.5px solid rgba(201,168,76,0.27)' },
-    ingested: { background: '#0a160e', color: '#4a9a6a',            border: '0.5px solid rgba(74,154,106,0.27)' },
-    review:   { background: '#16120a', color: 'var(--gold)',        border: '0.5px solid rgba(201,168,76,0.27)' },
+    idle:               { background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)' },
+    running:            { background: '#16120a', color: 'var(--gold)',       border: '0.5px solid rgba(201,168,76,0.27)' },
+    ingested:           { background: '#0a160e', color: '#4a9a6a',           border: '0.5px solid rgba(74,154,106,0.27)' },
+    review:             { background: '#16120a', color: 'var(--gold)',       border: '0.5px solid rgba(201,168,76,0.27)' },
+    'quarter-mismatch': { background: '#160f08', color: '#c9784c',          border: '0.5px solid rgba(201,120,76,0.4)' },
   };
   const labels: Record<CompanyStatus, React.ReactNode> = {
-    idle:     'idle',
-    running:  <><AnimDot />running</>,
-    ingested: '✓ ingested',
-    review:   '! review',
+    idle:               'idle',
+    running:            <><AnimDot />running</>,
+    ingested:           '✓ ingested',
+    review:             '! review',
+    'quarter-mismatch': '? quarter',
   };
   return (
     <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap', ...styles[status] }}>
@@ -146,7 +158,7 @@ export default function IngestPage() {
     setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   }, []);
 
-  // Load config + check already-ingested on mount / quarter change
+  // Load config + check already-ingested on quarter change — also resets all state
   useEffect(() => {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
@@ -173,6 +185,7 @@ export default function IngestPage() {
           };
         }
         setCompanies(states);
+        setResolveTarget(null);
       })
       .catch(() => {
         const states: Record<string, CompanyState> = {};
@@ -185,6 +198,7 @@ export default function IngestPage() {
           };
         }
         setCompanies(states);
+        setResolveTarget(null);
       });
   }, [quarter]);
 
@@ -196,7 +210,7 @@ export default function IngestPage() {
     const c = companiesRef.current[ticker];
     if (!c || c.status === 'running') return;
 
-    update(ticker, { status: 'running' });
+    update(ticker, { status: 'running', quarterMismatch: undefined });
 
     try {
       const res = await fetch('/api/ingest', {
@@ -218,6 +232,17 @@ export default function IngestPage() {
         });
         setResolveTarget(ticker);
         setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      } else if (data.status === 'quarter-mismatch') {
+        update(ticker, {
+          status: 'quarter-mismatch',
+          quarterMismatch: {
+            extracted: data.extractedQuarter,
+            selected: data.selectedQuarter,
+            claudeData: data.claudeData,
+            oaiData: data.oaiData,
+            transcriptUrl: data.transcriptUrl,
+          },
+        });
       } else {
         update(ticker, { status: 'idle' });
       }
@@ -226,8 +251,52 @@ export default function IngestPage() {
     }
   }
 
+  async function proceedAnyway(ticker: string) {
+    const c = companiesRef.current[ticker];
+    if (!c?.quarterMismatch) return;
+
+    update(ticker, { status: 'running' });
+
+    try {
+      const res = await fetch('/api/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'force-save',
+          ticker,
+          quarter,
+          claudeData: c.quarterMismatch.claudeData,
+          oaiData: c.quarterMismatch.oaiData,
+          transcriptUrl: c.quarterMismatch.transcriptUrl,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.status === 'ingested') {
+        update(ticker, { status: 'ingested', transcriptUrl: data.transcriptUrl, quarterMismatch: undefined });
+      } else if (data.status === 'review') {
+        update(ticker, {
+          status: 'review',
+          transcriptUrl: data.transcriptUrl,
+          divergentFields: data.divergentFields,
+          claudeData: data.claudeData,
+          oaiData: data.oaiData,
+          quarterMismatch: undefined,
+        });
+        setResolveTarget(ticker);
+        setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      } else {
+        update(ticker, { status: 'idle', quarterMismatch: undefined });
+      }
+    } catch {
+      update(ticker, { status: 'idle', quarterMismatch: undefined });
+    }
+  }
+
   function runAll() {
-    COMPANY_ORDER.filter(t => companiesRef.current[t]?.status !== 'ingested').forEach(t => runOne(t));
+    COMPANY_ORDER
+      .filter(t => companiesRef.current[t]?.status !== 'ingested')
+      .forEach(t => runOne(t));
   }
 
   async function resolveField(ticker: string, field: string, source: 'claude' | 'oai') {
@@ -255,10 +324,10 @@ export default function IngestPage() {
   const reviewCompany = resolveTarget ? companies[resolveTarget] : null;
   const anyRunning = Object.values(companies).some(c => c.status === 'running');
 
-  // Row border color by status
   function rowBorder(status: CompanyStatus) {
-    if (status === 'ingested') return 'rgba(74,154,106,0.2)';
-    if (status === 'review')   return 'rgba(201,168,76,0.27)';
+    if (status === 'ingested')           return 'rgba(74,154,106,0.2)';
+    if (status === 'review')             return 'rgba(201,168,76,0.27)';
+    if (status === 'quarter-mismatch')   return 'rgba(201,120,76,0.4)';
     return 'var(--border)';
   }
 
@@ -279,11 +348,13 @@ export default function IngestPage() {
       {/* Run bar */}
       <div style={{ background: 'var(--bg-surface)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const }}>Quarter</span>
-        <input
+        <select
           value={quarter}
           onChange={e => setQuarter(e.target.value)}
-          style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 80, outline: 'none' }}
-        />
+          style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 95, outline: 'none' }}
+        >
+          {QUARTERS.map(q => <option key={q} value={q}>{q}</option>)}
+        </select>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, marginLeft: 8 }}>Company</span>
         <select
           value={selectedTicker}
@@ -318,8 +389,8 @@ export default function IngestPage() {
           return (
             <div key={ticker} style={{ background: 'var(--bg-surface)', border: `0.5px solid ${rowBorder(c.status)}`, borderRadius: 8, padding: '10px 14px' }}>
 
-              {/* Top line: ticker · name · source · badge · view link */}
-              <div style={{ display: 'grid', gridTemplateColumns: '72px 90px 1fr 90px 60px', alignItems: 'center', gap: 10 }}>
+              {/* Top line: ticker · name · source · badge · action */}
+              <div style={{ display: 'grid', gridTemplateColumns: '72px 90px 1fr 105px 60px', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' }}>{ticker}</span>
                 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{c.name}</span>
                 <span style={{ fontSize: 9, color: 'var(--text-ghost)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{c.sourceLabel}</span>
@@ -332,7 +403,28 @@ export default function IngestPage() {
                 }
               </div>
 
-              {/* Bottom line: open → · url input · run → */}
+              {/* Quarter mismatch warning */}
+              {c.status === 'quarter-mismatch' && c.quarterMismatch && (
+                <div style={{ marginTop: 8, padding: '8px 10px', background: '#160f08', border: '0.5px solid rgba(201,120,76,0.3)', borderRadius: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 10, color: '#c9784c', flex: 1 }}>
+                    Transcript looks like <strong>{c.quarterMismatch.extracted}</strong> but you selected <strong>{c.quarterMismatch.selected}</strong> — proceed anyway?
+                  </span>
+                  <button
+                    onClick={() => proceedAnyway(ticker)}
+                    style={{ fontSize: 9, padding: '3px 10px', borderRadius: 3, background: '#1e1208', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.4)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
+                  >
+                    Proceed
+                  </button>
+                  <button
+                    onClick={() => update(ticker, { status: 'idle', quarterMismatch: undefined })}
+                    style={{ fontSize: 9, padding: '3px 10px', borderRadius: 3, background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Bottom line: open → · url input (placeholder = default url) · run → */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
                 {c.defaultUrl && (
                   <a href={c.defaultUrl} target="_blank" rel="noopener noreferrer"
@@ -341,7 +433,7 @@ export default function IngestPage() {
                   </a>
                 )}
                 <input
-                  placeholder="paste working URL here"
+                  placeholder={c.defaultUrl || 'paste working URL here'}
                   value={c.urlOverride}
                   onChange={e => update(ticker, { urlOverride: e.target.value })}
                   style={{ flex: 1, background: '#161410', border: '0.5px solid #2a2520', borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', outline: 'none' }}
