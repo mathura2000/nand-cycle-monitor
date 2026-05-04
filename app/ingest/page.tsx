@@ -30,6 +30,7 @@ interface CompanyState {
   defaultUrl: string;
   status: CompanyStatus;
   urlOverride: string;
+  pasteText: string;
   transcriptUrl?: string;
   divergentFields?: DivergentField[];
   claudeData?: Record<string, unknown>;
@@ -39,6 +40,62 @@ interface CompanyState {
 
 const QUARTERS = ['Q1 2026', 'Q4 2025', 'Q3 2025', 'Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024'];
 const COMPANY_ORDER = ['SSNLF', 'HXSCL', 'MU', 'SNDK', 'MSFT', 'GOOG', 'AMZN', 'META'];
+
+// Pre-confirmed Motley Fool transcript URLs per company per historical quarter.
+// Q1 2026 is omitted — the config tab always has the current-quarter URL.
+// SNDK's fiscal year is offset; Q4 2025 → SNDK Q2 FY2026, Q3 2025 → SNDK Q1 FY2026.
+// SSNLF/HXSCL have no Motley Fool historical transcripts — PDFs only.
+const TRANSCRIPT_URLS: Record<string, Record<string, string>> = {
+  MU: {
+    // Q4 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/MU-2025-Q4
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/06/25/micron-mu-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/03/20/micron-technology-mu-q2-2025-earnings-call-transcr/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/12/18/micron-technology-mu-q1-2025-earnings-call-transcr/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/10/micron-technology-mu-q4-2024-earnings-call-transcr/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/06/26/micron-technology-mu-q3-2024-earnings-call-transcr/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/03/20/micron-technology-mu-q2-2024-earnings-call-transcr/',
+  },
+  SNDK: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/29/sandisk-sndk-q2-2026-earnings-call-transcript/',
+    // Q3 2025 (SNDK Q1 FY2026, reported Nov 2025) not on Motley Fool — paste manually if needed
+  },
+  MSFT: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2025/08/05/microsoft-msft-q4-2025-earnings-call-transcript/',
+    // Q3 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/MSFT-2025-Q3
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/microsoft-msft-q2-2025-earnings-call-transcript/',
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/microsoft-msft-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/30/microsoft-msft-q4-2024-earnings-call-transcript/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/04/25/microsoft-msft-q3-2024-earnings-call-transcript/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/01/30/microsoft-msft-q2-2024-earnings-call-transcript/',
+  },
+  GOOG: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/04/alphabet-googl-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/30/alphabet-goog-q3-2025-earnings-call-transcript/',
+    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/07/23/alphabet-googl-q2-2025-earnings-call-transcript/',
+    // Q1 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/GOOG-2025-Q1
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/05/alphabet-goog-q4-2024-earnings-call-transcript/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/29/alphabet-googl-q3-2024-earnings-call-transcript/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/23/alphabet-googl-q2-2024-earnings-call-transcript/',
+  },
+  AMZN: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/05/amazon-amzn-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/31/amazon-amzn-q3-2025-earnings-call-transcript/',
+    // Q2 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/AMZN-2025-Q2
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/05/01/amazon-amzn-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/06/amazoncom-amzn-q4-2024-earnings-call-transcript/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/31/amazoncom-amzn-q3-2024-earnings-call-transcript/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/08/01/amazoncom-amzn-q2-2024-earnings-call-transcript/',
+  },
+  META: {
+    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/28/meta-meta-q4-2025-earnings-call-transcript/',
+    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/29/meta-platforms-meta-q3-2025-earnings-call-transcript/',
+    // Q2 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/META-2025-Q2
+    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/04/30/meta-platforms-meta-q1-2025-earnings-call-transcript/',
+    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/meta-platforms-meta-q4-2024-earnings-call-transcri/',
+    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/meta-platforms-meta-q3-2024-earnings-call-transcri/',
+    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/31/meta-platforms-meta-q2-2024-earnings-call-transcript/',
+  },
+};
 
 const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
   SNDK:  { name: 'SanDisk',   type: 'vendor' },
@@ -181,7 +238,8 @@ export default function IngestPage() {
             sourceLabel: sourceLabel(ticker, defaultUrl),
             defaultUrl,
             status: ingestedTickers.has(ticker) ? 'ingested' : 'idle',
-            urlOverride: '',
+            urlOverride: TRANSCRIPT_URLS[ticker]?.[quarter] ?? '',
+            pasteText: '',
           };
         }
         setCompanies(states);
@@ -194,7 +252,8 @@ export default function IngestPage() {
           states[ticker] = {
             ticker, name: meta.name, type: meta.type,
             sourceLabel: sourceLabel(ticker, ''), defaultUrl: '',
-            status: 'idle', urlOverride: '',
+            status: 'idle', urlOverride: TRANSCRIPT_URLS[ticker]?.[quarter] ?? '',
+            pasteText: '',
           };
         }
         setCompanies(states);
@@ -216,7 +275,7 @@ export default function IngestPage() {
       const res = await fetch('/api/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, quarter, urlOverride: c.urlOverride || undefined }),
+        body: JSON.stringify({ ticker, quarter, urlOverride: c.urlOverride || undefined, pasteText: c.pasteText || undefined }),
       });
       const data = await res.json();
 
@@ -296,6 +355,7 @@ export default function IngestPage() {
   function runAll() {
     COMPANY_ORDER
       .filter(t => companiesRef.current[t]?.status !== 'ingested')
+      .filter(t => !((t === 'SSNLF' || t === 'HXSCL') && quarter !== 'Q1 2026'))
       .forEach(t => runOne(t));
   }
 
@@ -350,7 +410,16 @@ export default function IngestPage() {
         <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const }}>Quarter</span>
         <select
           value={quarter}
-          onChange={e => setQuarter(e.target.value)}
+          onChange={e => {
+            setQuarter(e.target.value);
+            setCompanies(prev => {
+              const next = { ...prev };
+              Object.keys(next).forEach(t => {
+                next[t] = { ...next[t], urlOverride: '' };
+              });
+              return next;
+            });
+          }}
           style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 95, outline: 'none' }}
         >
           {QUARTERS.map(q => <option key={q} value={q}>{q}</option>)}
@@ -424,6 +493,15 @@ export default function IngestPage() {
                 </div>
               )}
 
+              {/* Paste textarea — for blocked sources (earningscall.ai, investing.com, PDFs) */}
+              <textarea
+                placeholder="or paste transcript text here to bypass URL fetch"
+                value={c.pasteText}
+                onChange={e => update(ticker, { pasteText: e.target.value })}
+                rows={c.pasteText ? 5 : 2}
+                style={{ width: '100%', marginTop: 8, background: '#0f0d0a', border: `0.5px solid ${c.pasteText ? '#3a3020' : '#1e1c18'}`, borderRadius: 4, color: '#c8b87a', fontSize: 9, padding: '4px 8px', outline: 'none', resize: 'vertical', fontFamily: 'monospace', boxSizing: 'border-box' as const }}
+              />
+
               {/* Bottom line: open → · url input (placeholder = default url) · run → */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
                 {c.defaultUrl && (
@@ -438,13 +516,19 @@ export default function IngestPage() {
                   onChange={e => update(ticker, { urlOverride: e.target.value })}
                   style={{ flex: 1, background: '#161410', border: '0.5px solid #2a2520', borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', outline: 'none' }}
                 />
-                <button
-                  onClick={() => runOne(ticker)}
-                  disabled={c.status === 'running'}
-                  style={{ fontSize: 9, color: c.status === 'running' ? 'var(--text-ghost)' : 'var(--gold)', padding: '3px 10px', border: '0.5px solid rgba(201,168,76,0.27)', borderRadius: 3, background: '#16120a', cursor: c.status === 'running' ? 'default' : 'pointer', whiteSpace: 'nowrap' as const }}
-                >
-                  {c.status === 'running' ? '…' : 'run →'}
-                </button>
+                {(() => {
+                  const pdfOnly = (ticker === 'SSNLF' || ticker === 'HXSCL') && quarter !== 'Q1 2026';
+                  return (
+                    <button
+                      onClick={() => runOne(ticker)}
+                      disabled={c.status === 'running' || pdfOnly}
+                      title={pdfOnly ? 'Historical data via PDF only — paste text above when available' : undefined}
+                      style={{ fontSize: 9, color: (c.status === 'running' || pdfOnly) ? 'var(--text-ghost)' : 'var(--gold)', padding: '3px 10px', border: '0.5px solid rgba(201,168,76,0.27)', borderRadius: 3, background: '#16120a', cursor: (c.status === 'running' || pdfOnly) ? 'default' : 'pointer', whiteSpace: 'nowrap' as const }}
+                    >
+                      {pdfOnly ? 'pdf only' : c.status === 'running' ? '…' : 'run →'}
+                    </button>
+                  );
+                })()}
               </div>
 
             </div>

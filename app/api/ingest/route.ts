@@ -398,13 +398,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Main ingest
-    const { ticker, quarter, urlOverride } = body;
+    const { ticker, quarter, urlOverride, pasteText } = body;
     if (!ticker || !quarter) {
       return NextResponse.json({ error: 'ticker and quarter required' }, { status: 400 });
     }
 
-    // Production (Vercel) blocks auto-fetch, but always honour an explicit urlOverride
-    if (process.env.NODE_ENV === 'production' && !urlOverride) {
+    // Production (Vercel) blocks auto-fetch, but always honour an explicit urlOverride or pasteText
+    if (process.env.NODE_ENV === 'production' && !urlOverride && !pasteText) {
       return NextResponse.json({
         status: 'needs-url',
         ticker,
@@ -441,15 +441,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!fetchUrl) {
+    // Fetch transcript (or use pasted text directly)
+    const pastedClean = pasteText?.trim();
+
+    if (!fetchUrl && !pastedClean) {
       return NextResponse.json({ status: 'needs-url', ticker, quarter, defaultUrl }, { status: 200 });
     }
 
-    // Fetch transcript
-    const fetched = await fetchTranscript(fetchUrl);
+    const fetched = pastedClean
+      ? { text: pastedClean.substring(0, 80000) }
+      : await fetchTranscript(fetchUrl);
     if (!fetched) {
       return NextResponse.json({ status: 'needs-url', ticker, quarter, defaultUrl }, { status: 200 });
     }
+    // When paste is used, never let fetchUrl (config default) bleed into the saved URL
+    const transcriptRef = pastedClean ? (urlOverride || 'pasted') : fetchUrl;
 
     // Dual extraction — Claude + OpenAI in parallel
     const [claudeRaw, oaiRaw] = await Promise.all([
@@ -468,7 +474,7 @@ export async function POST(req: NextRequest) {
         status: 'quarter-mismatch',
         extractedQuarter,
         selectedQuarter: quarter,
-        transcriptUrl: fetchUrl,
+        transcriptUrl: transcriptRef,
         claudeData: claudeRaw ? toExtractedData(claudeRaw) : null,
         oaiData: oaiRaw ? toExtractedData(oaiRaw) : null,
       });
@@ -481,7 +487,7 @@ export async function POST(req: NextRequest) {
     if (!claudeResult || !oaiResult) {
       const extracted = claudeResult ?? oaiResult!;
       const runId = `run_${Date.now()}`;
-      await saveSignalRow(sheets, ticker, quarter, extracted, fetchUrl, runId);
+      await saveSignalRow(sheets, ticker, quarter, extracted, transcriptRef, runId);
       return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl: fetchUrl, extracted });
     }
 
@@ -490,7 +496,7 @@ export async function POST(req: NextRequest) {
 
     if (divergentFields.length === 0) {
       const runId = `run_${Date.now()}`;
-      await saveSignalRow(sheets, ticker, quarter, claudeResult, fetchUrl, runId);
+      await saveSignalRow(sheets, ticker, quarter, claudeResult, transcriptRef, runId);
       return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl: fetchUrl, extracted: claudeResult });
     }
 
