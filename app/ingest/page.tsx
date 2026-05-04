@@ -56,7 +56,7 @@ const TRANSCRIPT_URLS: Record<string, Record<string, string>> = {
   },
   SNDK: {
     'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/29/sandisk-sndk-q2-2026-earnings-call-transcript/',
-    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/30/sandisk-sndk-q1-2026-earnings-call-transcript/',
+    // Q3 2025 (SNDK Q1 FY2026, reported Nov 2025) not on Motley Fool — paste manually if needed
   },
   MSFT: {
     'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2025/08/05/microsoft-msft-q4-2025-earnings-call-transcript/',
