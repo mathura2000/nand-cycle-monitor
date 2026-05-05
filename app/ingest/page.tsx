@@ -41,6 +41,16 @@ function CellIcon({ status }: { status: CellStatus }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+interface BatchProgress {
+  fetched: number;
+  extracted: number;
+  skipped: number;
+  errors: number;
+  total: number;
+  current: string;
+  finished: boolean;
+}
+
 export default function IngestPage() {
   const [grid, setGrid] = useState<GridCell[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string>('SNDK');
@@ -51,7 +61,9 @@ export default function IngestPage() {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [status, setStatus] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [skippedCurrent, setSkippedCurrent] = useState(false);
   const [naTooltip, setNaTooltip] = useState<string | null>(null);
+  const [batch, setBatch] = useState<BatchProgress | null>(null);
 
   // Company dropdown open state
   const [companyOpen, setCompanyOpen] = useState(false);
@@ -85,6 +97,7 @@ export default function IngestPage() {
     setPasteText('');
     setPdfFile(null);
     setStatus('');
+    setSkippedCurrent(false);
   }, [selectedTicker, selectedQuarter, loadDefaultUrl]);
 
   function cellStatus(ticker: string, quarter: string): CellStatus {
@@ -103,13 +116,14 @@ export default function IngestPage() {
     setQuarterOpen(false);
   }
 
-  async function handleIngest() {
+  async function handleIngest(force = false) {
     setLoading(true);
     setStatus('');
+    setSkippedCurrent(false);
 
     try {
       let sourceType: 'paste' | 'pdf' | 'url';
-      let body: Record<string, unknown> = { ticker: selectedTicker, quarter: selectedQuarter };
+      let body: Record<string, unknown> = { ticker: selectedTicker, quarter: selectedQuarter, force };
 
       if (pasteText.trim()) {
         sourceType = 'paste';
@@ -136,13 +150,14 @@ export default function IngestPage() {
       });
       const data = await res.json();
 
-      if (data.status === 'quarter-mismatch') {
-        setStatus(`Quarter mismatch: transcript looks like ${data.extractedQuarter} but you selected ${data.selectedQuarter}. Re-run to confirm.`);
-        // Re-send with the selected quarter (force through)
+      if (data.skipped) {
+        setStatus('↩ Data is current in DB — no re-extraction needed.');
+        setSkippedCurrent(true);
       } else if (data.success) {
         setStatus('✓ Ingested successfully.');
         setPasteText('');
         setPdfFile(null);
+        setSkippedCurrent(false);
         await loadGrid();
       } else {
         setStatus(`Error: ${data.error ?? 'Unknown error'}`);
@@ -152,6 +167,79 @@ export default function IngestPage() {
     }
 
     setLoading(false);
+  }
+
+  async function handleIngestAll() {
+    setBatch({ fetched: 0, extracted: 0, skipped: 0, errors: 0, total: 0, current: 'Loading config…', finished: false });
+
+    // Fetch all config rows with a default URL
+    let configRows: { ticker: string; quarter: string; default_url: string }[] = [];
+    try {
+      const res = await fetch('/api/sheets?action=data');
+      const data = await res.json();
+      configRows = (data.config ?? []).filter((r: { default_url: string }) => r.default_url);
+    } catch {
+      setBatch(b => b ? { ...b, current: 'Failed to load config', finished: true, fetched: 0, extracted: 0 } : null);
+      return;
+    }
+
+    // Load current grid to skip already-done cells
+    let currentGrid: GridCell[] = [];
+    try {
+      const res = await fetch('/api/ingest/status');
+      const data = await res.json();
+      currentGrid = data.grid ?? [];
+    } catch { /* proceed anyway */ }
+
+    const doneSet = new Set(
+      currentGrid.filter(c => c.status === 'done').map(c => `${c.ticker}|${c.quarter}`)
+    );
+
+    const queue = configRows.filter(r => !doneSet.has(`${r.ticker}|${r.quarter}`));
+
+    if (queue.length === 0) {
+      setBatch({ fetched: 0, extracted: 0, skipped: 0, errors: 0, total: 0, current: 'Nothing to ingest — all cells with URLs are already done.', finished: true });
+      return;
+    }
+
+    setBatch({ fetched: 0, extracted: 0, skipped: 0, errors: 0, total: queue.length, current: '', finished: false });
+
+    let fetched = 0;
+    let extracted = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const row of queue) {
+      const label = `${row.ticker} ${row.quarter}`;
+      setBatch(b => b ? { ...b, current: label } : null);
+
+      try {
+        const res = await fetch('/api/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // No force:true — server will skip cells that already have valid signals
+          body: JSON.stringify({ ticker: row.ticker, quarter: row.quarter, sourceType: 'url', url: row.default_url }),
+        });
+        const data = await res.json();
+        if (data.skipped) { skipped++; }
+        else if (data.success) { fetched++; extracted++; }
+        else if (data.status === 'partial') { fetched++; errors++; }
+        else { errors++; }
+      } catch {
+        errors++;
+      }
+
+      // Refresh grid after each cell so status updates live
+      try {
+        const res = await fetch('/api/ingest/status');
+        const data = await res.json();
+        setGrid(data.grid ?? []);
+      } catch { /* non-fatal */ }
+
+      setBatch(b => b ? { ...b, fetched, extracted, skipped, errors } : null);
+    }
+
+    setBatch({ fetched, extracted, skipped, errors, total: queue.length, current: '', finished: true });
   }
 
   const companyLabel = `${COMPANY_META[selectedTicker]?.name ?? selectedTicker} (${selectedTicker})`;
@@ -174,9 +262,40 @@ export default function IngestPage() {
 
         {/* ── Left: grid ── */}
         <div style={{ flex: '0 0 390px', background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
-          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
-            Data history status
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+              Data history status
+            </div>
+            <button
+              onClick={handleIngestAll}
+              disabled={!!batch && !batch.finished}
+              title="Fetch all cells that have a default URL. Cells that can't be fetched server-side will show ✕."
+              style={{ fontSize: 9, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '3px 10px', borderRadius: 3, cursor: (batch && !batch.finished) ? 'default' : 'pointer', background: '#0e1208', color: (batch && !batch.finished) ? '#2a4a2a' : '#4a9a6a', border: `0.5px solid ${(batch && !batch.finished) ? '#1a2a1a' : 'rgba(74,154,106,0.35)'}`, opacity: (batch && !batch.finished) ? 0.6 : 1 }}
+            >
+              {(batch && !batch.finished) ? '…running' : 'Ingest all →'}
+            </button>
           </div>
+
+          {/* Batch progress */}
+          {batch && (
+            <div style={{ marginBottom: 10, padding: '6px 8px', background: '#0c110c', border: '0.5px solid #1a2a1a', borderRadius: 5 }}>
+              {batch.finished ? (
+                <div style={{ fontSize: 9, color: '#4a9a6a' }}>
+                  Done — {batch.extracted} extracted
+                  {batch.skipped > 0 && <span style={{ color: '#3a6a3a', marginLeft: 6 }}>· {batch.skipped} already current (skipped)</span>}
+                  {batch.fetched > batch.extracted && <span style={{ color: '#9a7a4a', marginLeft: 6 }}>· {batch.fetched - batch.extracted} fetch-only (signals error)</span>}
+                  {batch.errors > 0 && <span style={{ color: '#6a3a3a', marginLeft: 6 }}>· {batch.errors} fetch failed (earningscall.ai / unreachable)</span>}
+                </div>
+              ) : (
+                <div style={{ fontSize: 9, color: '#3a6a3a' }}>
+                  <span style={{ animation: 'pulseDot 1.2s ease-in-out infinite', display: 'inline-block', marginRight: 4 }}>·</span>
+                  {batch.fetched} fetched · {batch.extracted} extracted · {batch.skipped} skipped · {batch.errors} errors · {batch.total - batch.fetched - batch.skipped - batch.errors} remaining
+                  {batch.current && <span style={{ color: '#2a4a2a', marginLeft: 6 }}> — {batch.current}</span>}
+                </div>
+              )}
+            </div>
+          )}
+
 
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -379,15 +498,27 @@ export default function IngestPage() {
 
           <div style={{ borderTop: '0.5px solid #1a1812', margin: '12px 0' }} />
 
-          <button
-            onClick={handleIngest}
-            disabled={loading}
-            style={{ width: '100%', padding: 8, background: '#0b0906', border: '0.5px solid rgba(201,168,76,0.55)', borderRadius: 5, color: '#c9a84c', fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: loading ? 'default' : 'pointer', fontFamily: 'sans-serif', opacity: loading ? 0.6 : 1 }}
-          >
-            {loading ? <span style={{ animation: 'pulseDot 1.2s ease-in-out infinite', display: 'inline-block' }}>ingesting…</span> : 'Ingest → extract signals'}
-          </button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={() => handleIngest(false)}
+              disabled={loading}
+              style={{ flex: 1, padding: 8, background: '#0b0906', border: '0.5px solid rgba(201,168,76,0.55)', borderRadius: 5, color: '#c9a84c', fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: loading ? 'default' : 'pointer', fontFamily: 'sans-serif', opacity: loading ? 0.6 : 1 }}
+            >
+              {loading ? <span style={{ animation: 'pulseDot 1.2s ease-in-out infinite', display: 'inline-block' }}>ingesting…</span> : 'Ingest → extract signals'}
+            </button>
+            {skippedCurrent && (
+              <button
+                onClick={() => handleIngest(true)}
+                disabled={loading}
+                title="Force re-fetch and re-extract even if data already exists in DB"
+                style={{ padding: '8px 12px', background: '#0c0806', border: '0.5px solid rgba(106,80,32,0.55)', borderRadius: 5, color: '#6a5020', fontSize: 9, fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase', cursor: loading ? 'default' : 'pointer', fontFamily: 'sans-serif', whiteSpace: 'nowrap' }}
+              >
+                Force re-ingest
+              </button>
+            )}
+          </div>
 
-          <div style={{ fontSize: 9, color: status.startsWith('✓') ? '#4a9a6a' : status.startsWith('Error') ? '#9a4a4a' : '#252218', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
+          <div style={{ fontSize: 9, color: status.startsWith('✓') ? '#4a9a6a' : status.startsWith('↩') ? '#3a5a3a' : status.startsWith('Error') ? '#9a4a4a' : '#252218', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
             {status || 'stores raw transcript → extracts signals → grid cell turns green'}
           </div>
         </div>
