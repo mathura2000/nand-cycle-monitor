@@ -42,7 +42,7 @@ const URLS = {
   },
   MU: {
     'Q1 2026': 'https://www.fool.com/earnings/call-transcripts/2025/12/17/micron-mu-q1-2026-earnings-call-transcript/',
-    'Q4 2025': null, // not on Motley Fool — paste from earningscall.ai/stock/transcript/MU-2025-Q4
+    'Q4 2025': 'https://earningscall.ai/stock/transcript/MU-2025-Q4',
     'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/06/25/micron-mu-q3-2025-earnings-call-transcript/',
     'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/03/20/micron-technology-mu-q2-2025-earnings-call-transcr/',
     'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/12/18/micron-technology-mu-q1-2025-earnings-call-transcr/',
@@ -65,7 +65,7 @@ const URLS = {
   MSFT: {
     'Q1 2026': 'https://www.fool.com/earnings/call-transcripts/2025/10/29/microsoft-msft-q1-2026-earnings-call-transcript/',
     'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2025/08/05/microsoft-msft-q4-2025-earnings-call-transcript/',
-    'Q3 2025': null, // not on Motley Fool — paste from earningscall.ai/stock/transcript/MSFT-2025-Q3
+    'Q3 2025': 'https://earningscall.ai/stock/transcript/MSFT-2025-Q3',
     'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/microsoft-msft-q2-2025-earnings-call-transcript/',
     'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/microsoft-msft-q1-2025-earnings-call-transcript/',
     'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/30/microsoft-msft-q4-2024-earnings-call-transcript/',
@@ -77,7 +77,7 @@ const URLS = {
     'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/04/alphabet-googl-q4-2025-earnings-call-transcript/',
     'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/30/alphabet-goog-q3-2025-earnings-call-transcript/',
     'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/07/23/alphabet-googl-q2-2025-earnings-call-transcript/',
-    'Q1 2025': null, // not on Motley Fool — paste from earningscall.ai/stock/transcript/GOOG-2025-Q1
+    'Q1 2025': 'https://earningscall.ai/stock/transcript/GOOG-2025-Q1',
     'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/05/alphabet-goog-q4-2024-earnings-call-transcript/',
     'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/29/alphabet-googl-q3-2024-earnings-call-transcript/',
     'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/23/alphabet-googl-q2-2024-earnings-call-transcript/',
@@ -86,7 +86,7 @@ const URLS = {
     'Q1 2026': 'https://www.fool.com/earnings/call-transcripts/2026/04/29/amazon-amzn-q1-2026-earnings-call-transcript/',
     'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/05/amazon-amzn-q4-2025-earnings-call-transcript/',
     'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/31/amazon-amzn-q3-2025-earnings-call-transcript/',
-    'Q2 2025': null, // not on Motley Fool — paste from earningscall.ai/stock/transcript/AMZN-2025-Q2
+    'Q2 2025': 'https://earningscall.ai/stock/transcript/AMZN-2025-Q2',
     'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/05/01/amazon-amzn-q1-2025-earnings-call-transcript/',
     'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/06/amazoncom-amzn-q4-2024-earnings-call-transcript/',
     'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/31/amazoncom-amzn-q3-2024-earnings-call-transcript/',
@@ -96,7 +96,7 @@ const URLS = {
     'Q1 2026': 'https://www.fool.com/earnings/call-transcripts/2026/04/29/meta-meta-q1-2026-earnings-call-transcript/',
     'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/28/meta-meta-q4-2025-earnings-call-transcript/',
     'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/29/meta-platforms-meta-q3-2025-earnings-call-transcript/',
-    'Q2 2025': null, // not on Motley Fool — paste from earningscall.ai/stock/transcript/META-2025-Q2
+    'Q2 2025': 'https://earningscall.ai/stock/transcript/META-2025-Q2',
     'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/04/30/meta-platforms-meta-q1-2025-earnings-call-transcript/',
     'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/meta-platforms-meta-q4-2024-earnings-call-transcri/',
     'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/meta-platforms-meta-q3-2024-earnings-call-transcri/',

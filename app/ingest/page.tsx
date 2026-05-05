@@ -41,6 +41,14 @@ function CellIcon({ status }: { status: CellStatus }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+interface BatchProgress {
+  done: number;
+  errors: number;
+  total: number;
+  current: string;
+  finished: boolean;
+}
+
 export default function IngestPage() {
   const [grid, setGrid] = useState<GridCell[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string>('SNDK');
@@ -52,6 +60,7 @@ export default function IngestPage() {
   const [status, setStatus] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [naTooltip, setNaTooltip] = useState<string | null>(null);
+  const [batch, setBatch] = useState<BatchProgress | null>(null);
 
   // Company dropdown open state
   const [companyOpen, setCompanyOpen] = useState(false);
@@ -154,6 +163,73 @@ export default function IngestPage() {
     setLoading(false);
   }
 
+  async function handleIngestAll() {
+    setBatch({ done: 0, errors: 0, total: 0, current: 'Loading config…', finished: false });
+
+    // Fetch all config rows with a default URL
+    let configRows: { ticker: string; quarter: string; default_url: string }[] = [];
+    try {
+      const res = await fetch('/api/sheets?action=data');
+      const data = await res.json();
+      configRows = (data.config ?? []).filter((r: { default_url: string }) => r.default_url);
+    } catch {
+      setBatch(b => b ? { ...b, current: 'Failed to load config', finished: true } : null);
+      return;
+    }
+
+    // Load current grid to skip already-done cells
+    let currentGrid: GridCell[] = [];
+    try {
+      const res = await fetch('/api/ingest/status');
+      const data = await res.json();
+      currentGrid = data.grid ?? [];
+    } catch { /* proceed anyway */ }
+
+    const doneSet = new Set(
+      currentGrid.filter(c => c.status === 'done').map(c => `${c.ticker}|${c.quarter}`)
+    );
+
+    const queue = configRows.filter(r => !doneSet.has(`${r.ticker}|${r.quarter}`));
+
+    if (queue.length === 0) {
+      setBatch({ done: 0, errors: 0, total: 0, current: 'Nothing to ingest — all cells with URLs are already done.', finished: true });
+      return;
+    }
+
+    setBatch({ done: 0, errors: 0, total: queue.length, current: '', finished: false });
+
+    let done = 0;
+    let errors = 0;
+
+    for (const row of queue) {
+      const label = `${row.ticker} ${row.quarter}`;
+      setBatch(b => b ? { ...b, current: label } : null);
+
+      try {
+        const res = await fetch('/api/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker: row.ticker, quarter: row.quarter, sourceType: 'url', url: row.default_url }),
+        });
+        const data = await res.json();
+        if (data.success) { done++; } else { errors++; }
+      } catch {
+        errors++;
+      }
+
+      // Refresh grid after each cell so status updates live
+      try {
+        const res = await fetch('/api/ingest/status');
+        const data = await res.json();
+        setGrid(data.grid ?? []);
+      } catch { /* non-fatal */ }
+
+      setBatch(b => b ? { ...b, done, errors } : null);
+    }
+
+    setBatch({ done, errors, total: queue.length, current: '', finished: true });
+  }
+
   const companyLabel = `${COMPANY_META[selectedTicker]?.name ?? selectedTicker} (${selectedTicker})`;
 
   return (
@@ -174,9 +250,38 @@ export default function IngestPage() {
 
         {/* ── Left: grid ── */}
         <div style={{ flex: '0 0 390px', background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
-          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
-            Data history status
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+              Data history status
+            </div>
+            <button
+              onClick={handleIngestAll}
+              disabled={!!batch && !batch.finished}
+              title="Fetch all cells that have a default URL. Cells that can't be fetched server-side will show ✕."
+              style={{ fontSize: 9, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '3px 10px', borderRadius: 3, cursor: (batch && !batch.finished) ? 'default' : 'pointer', background: '#0e1208', color: (batch && !batch.finished) ? '#2a4a2a' : '#4a9a6a', border: `0.5px solid ${(batch && !batch.finished) ? '#1a2a1a' : 'rgba(74,154,106,0.35)'}`, opacity: (batch && !batch.finished) ? 0.6 : 1 }}
+            >
+              {(batch && !batch.finished) ? '…running' : 'Ingest all →'}
+            </button>
           </div>
+
+          {/* Batch progress */}
+          {batch && (
+            <div style={{ marginBottom: 10, padding: '6px 8px', background: '#0c110c', border: '0.5px solid #1a2a1a', borderRadius: 5 }}>
+              {batch.finished ? (
+                <div style={{ fontSize: 9, color: '#4a9a6a' }}>
+                  Done — {batch.done} ingested
+                  {batch.errors > 0 && <span style={{ color: '#9a4a4a', marginLeft: 6 }}>{batch.errors} failed (earningscall.ai / no server fetch)</span>}
+                </div>
+              ) : (
+                <div style={{ fontSize: 9, color: '#3a6a3a' }}>
+                  <span style={{ animation: 'pulseDot 1.2s ease-in-out infinite', display: 'inline-block', marginRight: 4 }}>·</span>
+                  {batch.done} / {batch.total} done · {batch.errors} errors
+                  {batch.current && <span style={{ color: '#2a4a2a', marginLeft: 6 }}>{batch.current}</span>}
+                </div>
+              )}
+            </div>
+          )}
+
 
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
