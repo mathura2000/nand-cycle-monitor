@@ -83,24 +83,6 @@ async function fetchUrl(url: string): Promise<string | null> {
   }
 }
 
-// ── Quarter detection ─────────────────────────────────────────────────────────
-
-function detectQuarter(text: string): string | null {
-  // Look for patterns like "Q1 fiscal 2026", "first quarter of fiscal 2026", etc.
-  const m =
-    text.match(/\b(Q[1-4])\s+(?:fiscal\s+)?(\d{4})\b/i) ||
-    text.match(/\b(?:first|second|third|fourth)\s+quarter.*?(\d{4})\b/i);
-  if (!m) return null;
-  const qMap: Record<string, string> = { first: 'Q1', second: 'Q2', third: 'Q3', fourth: 'Q4' };
-  const q = m[1] ? m[1].toUpperCase() : qMap[m[0].split(' ')[0].toLowerCase()];
-  const y = m[2] ?? m[1];
-  if (!q || !y || !/^\d{4}$/.test(y)) return null;
-  return `${q} ${y}`;
-}
-
-function quartersMatch(a: string, b: string): boolean {
-  return a.toUpperCase().trim() === b.toUpperCase().trim();
-}
 
 // ── Claude extraction ─────────────────────────────────────────────────────────
 
@@ -209,16 +191,6 @@ export async function POST(req: NextRequest) {
 
     if (!text) {
       return NextResponse.json({ error: 'No text content could be obtained' }, { status: 422 });
-    }
-
-    // Quarter mismatch check (best-effort, non-blocking)
-    const detectedQuarter = detectQuarter(text);
-    if (detectedQuarter && !quartersMatch(detectedQuarter, quarter)) {
-      return NextResponse.json({
-        status: 'quarter-mismatch',
-        extractedQuarter: detectedQuarter,
-        selectedQuarter: quarter,
-      });
     }
 
     // 2. Store transcript (upsert — overwrites if re-ingesting)

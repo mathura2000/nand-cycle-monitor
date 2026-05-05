@@ -42,7 +42,8 @@ function CellIcon({ status }: { status: CellStatus }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 interface BatchProgress {
-  done: number;
+  fetched: number;
+  extracted: number;
   errors: number;
   total: number;
   current: string;
@@ -164,7 +165,7 @@ export default function IngestPage() {
   }
 
   async function handleIngestAll() {
-    setBatch({ done: 0, errors: 0, total: 0, current: 'Loading config…', finished: false });
+    setBatch({ fetched: 0, extracted: 0, errors: 0, total: 0, current: 'Loading config…', finished: false });
 
     // Fetch all config rows with a default URL
     let configRows: { ticker: string; quarter: string; default_url: string }[] = [];
@@ -173,7 +174,7 @@ export default function IngestPage() {
       const data = await res.json();
       configRows = (data.config ?? []).filter((r: { default_url: string }) => r.default_url);
     } catch {
-      setBatch(b => b ? { ...b, current: 'Failed to load config', finished: true } : null);
+      setBatch(b => b ? { ...b, current: 'Failed to load config', finished: true, fetched: 0, extracted: 0 } : null);
       return;
     }
 
@@ -192,13 +193,14 @@ export default function IngestPage() {
     const queue = configRows.filter(r => !doneSet.has(`${r.ticker}|${r.quarter}`));
 
     if (queue.length === 0) {
-      setBatch({ done: 0, errors: 0, total: 0, current: 'Nothing to ingest — all cells with URLs are already done.', finished: true });
+      setBatch({ fetched: 0, extracted: 0, errors: 0, total: 0, current: 'Nothing to ingest — all cells with URLs are already done.', finished: true });
       return;
     }
 
-    setBatch({ done: 0, errors: 0, total: queue.length, current: '', finished: false });
+    setBatch({ fetched: 0, extracted: 0, errors: 0, total: queue.length, current: '', finished: false });
 
-    let done = 0;
+    let fetched = 0;
+    let extracted = 0;
     let errors = 0;
 
     for (const row of queue) {
@@ -212,7 +214,9 @@ export default function IngestPage() {
           body: JSON.stringify({ ticker: row.ticker, quarter: row.quarter, sourceType: 'url', url: row.default_url }),
         });
         const data = await res.json();
-        if (data.success) { done++; } else { errors++; }
+        if (data.success) { fetched++; extracted++; }
+        else if (data.status === 'partial') { fetched++; errors++; } // transcript stored, signals failed
+        else { errors++; }
       } catch {
         errors++;
       }
@@ -224,10 +228,10 @@ export default function IngestPage() {
         setGrid(data.grid ?? []);
       } catch { /* non-fatal */ }
 
-      setBatch(b => b ? { ...b, done, errors } : null);
+      setBatch(b => b ? { ...b, fetched, extracted, errors } : null);
     }
 
-    setBatch({ done, errors, total: queue.length, current: '', finished: true });
+    setBatch({ fetched, extracted, errors, total: queue.length, current: '', finished: true });
   }
 
   const companyLabel = `${COMPANY_META[selectedTicker]?.name ?? selectedTicker} (${selectedTicker})`;
@@ -269,14 +273,15 @@ export default function IngestPage() {
             <div style={{ marginBottom: 10, padding: '6px 8px', background: '#0c110c', border: '0.5px solid #1a2a1a', borderRadius: 5 }}>
               {batch.finished ? (
                 <div style={{ fontSize: 9, color: '#4a9a6a' }}>
-                  Done — {batch.done} ingested
-                  {batch.errors > 0 && <span style={{ color: '#9a4a4a', marginLeft: 6 }}>{batch.errors} failed (earningscall.ai / no server fetch)</span>}
+                  Done — {batch.extracted} extracted
+                  {batch.fetched > batch.extracted && <span style={{ color: '#9a7a4a', marginLeft: 6 }}>{batch.fetched - batch.extracted} fetch-only (signals error)</span>}
+                  {batch.errors > 0 && <span style={{ color: '#6a3a3a', marginLeft: 6 }}>{batch.errors} fetch failed (earningscall.ai / unreachable)</span>}
                 </div>
               ) : (
                 <div style={{ fontSize: 9, color: '#3a6a3a' }}>
                   <span style={{ animation: 'pulseDot 1.2s ease-in-out infinite', display: 'inline-block', marginRight: 4 }}>·</span>
-                  {batch.done} / {batch.total} done · {batch.errors} errors
-                  {batch.current && <span style={{ color: '#2a4a2a', marginLeft: 6 }}>{batch.current}</span>}
+                  {batch.fetched} fetched · {batch.extracted} extracted · {batch.errors} errors · {batch.total - batch.fetched - batch.errors} remaining
+                  {batch.current && <span style={{ color: '#2a4a2a', marginLeft: 6 }}> — {batch.current}</span>}
                 </div>
               )}
             </div>
