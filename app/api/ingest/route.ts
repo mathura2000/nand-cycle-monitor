@@ -16,7 +16,7 @@ const COMPANY_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler
 // ── HTML → text ───────────────────────────────────────────────────────────────
 
 function cleanHtml(html: string): string {
-  let text = html
+  const full = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
@@ -25,13 +25,22 @@ function cleanHtml(html: string): string {
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/\s+/g, ' ').trim();
 
+  // Preserve up to 12k chars from the page header (press release / financial highlights)
+  // before the call starts — many transcripts put key capex/revenue figures here.
+  const headerSnippet = full.substring(0, 12000);
+
   const startMarkers = ['Operator:', 'OPERATOR:', 'Good morning', 'Good afternoon', 'Good evening', 'Ladies and gentlemen', 'Thank you for standing by', 'Welcome to'];
   for (const marker of startMarkers) {
-    const idx = text.indexOf(marker);
-    if (idx > 0 && idx < text.length * 0.6) { text = text.substring(idx); break; }
+    const idx = full.indexOf(marker);
+    if (idx > 0 && idx < full.length * 0.8) {
+      // Combine header (for financial highlights) + transcript body (for Q&A)
+      const transcript = full.substring(idx);
+      const combined = headerSnippet + '\n\n--- TRANSCRIPT ---\n\n' + transcript;
+      return combined.substring(0, 80000);
+    }
   }
 
-  return text.substring(0, 80000);
+  return full.substring(0, 80000);
 }
 
 // ── PDF text extraction (base64 input) ───────────────────────────────────────
@@ -87,7 +96,7 @@ async function fetchUrl(url: string): Promise<string | null> {
 // ── Claude extraction ─────────────────────────────────────────────────────────
 
 function buildExtractionPrompt(ticker: string, company: string, quarter: string, type: string, rawText: string): string {
-  return `You are extracting structured data from a semiconductor earnings call transcript.
+  return `You are extracting structured data from a semiconductor/cloud earnings call transcript.
 
 Company: ${company}
 Ticker: ${ticker}
@@ -96,20 +105,33 @@ Type: ${type} (vendor = NAND manufacturer, hyperscaler = cloud company)
 
 Extract the following fields. Return ONLY valid JSON, no other text.
 
+IMPORTANT calculation rules:
+- For any *_pct field: if the transcript states an explicit percentage (e.g. "up 28%") use that number directly.
+  If only dollar figures are given (e.g. "$14B vs $11.5B last year"), CALCULATE the YoY % yourself: round(14/11.5 - 1)*100 = 22.
+  Only return null if you cannot find ANY relevant dollar or percentage data.
+- Round all percentages to one decimal place.
+
 For ALL companies:
-- capex_pct: CapEx change year-over-year as a number (e.g. 28 for +28%, -10 for -10%). null if not mentioned.
-- mgmt_tone_score: Management tone 1-5 (1=very bearish, 3=neutral, 5=very bullish). Required.
-- capex_quote: The exact quote from the transcript supporting capex_pct. null if capex_pct is null.
+- capex_pct: Total CapEx (or infrastructure/data-center spend for hyperscalers) change year-over-year as a number.
+  Search the ENTIRE transcript for any of these signals, in order of preference:
+  1. Explicit YoY% stated ("capex up 45% year over year") → use directly.
+  2. Current quarter dollar + same quarter prior year dollar stated in the same call → compute YoY%.
+  3. Full-year or forward guidance vs prior year ("$90B in 2025 vs $55B in 2024" or "we guided $60B for the year, last year was $45B") → compute YoY%.
+  4. Sequential (QoQ) capex data only → use QoQ% as an approximation (note this in capex_quote).
+  5. Management says "substantially higher", "significantly increased", "roughly flat", "pulling back" → estimate: "substantially higher" = 40, "significantly higher" = 25, "modest increase" = 10, "roughly flat" = 0, "lower" = -15, "significantly lower" = -30.
+  null ONLY if absolutely no capex direction or dollar figures appear anywhere in the transcript.
+- mgmt_tone_score: Management tone 1-5 (1=very bearish, 3=neutral, 5=very bullish). Required — never null.
+- capex_quote: The exact quote from the transcript that you used to derive capex_pct. null if capex_pct is null.
 - mgmt_tone_quote: The exact quote supporting mgmt_tone_score. Required.
 
 For VENDOR companies only (MU, SNDK, SSNLF, HXSCL):
-- bit_growth_pct: NAND bit shipment growth YoY as a number. null if not mentioned.
-- asp_change_pct: Average selling price change YoY as a number. null if not mentioned.
-- inventory_days: Inventory days as a number. null if not mentioned.
-- node_transition_note: Brief note on node transition progress. null if not mentioned.
-- bit_growth_quote: Exact quote supporting bit_growth_pct.
-- asp_quote: Exact quote supporting asp_change_pct.
-- inventory_quote: Exact quote supporting inventory_days.
+- bit_growth_pct: NAND bit shipment growth YoY as a number. If only a directional comment ("bit shipments grew double digits", "strong bit growth"), use: "double digit" = 15, "strong" = 10, "modest" = 5, "flat" = 0, "declined" = -10. null only if NAND bits are not discussed at all.
+- asp_change_pct: NAND average selling price change — prefer QoQ if stated, else YoY. Compute from dollar figures if needed. Directional only: "rising" = 5, "flat" = 0, "softening" = -5. null if not discussed at all.
+- inventory_days: Channel or company inventory days as a number. null if not mentioned.
+- node_transition_note: One sentence on node/process transition progress (e.g. "Ramping 232-layer; 60% of bits on 3D NAND"). null if not mentioned.
+- bit_growth_quote: Exact quote supporting bit_growth_pct. null if bit_growth_pct is null.
+- asp_quote: Exact quote supporting asp_change_pct. null if asp_change_pct is null.
+- inventory_quote: Exact quote supporting inventory_days. null if inventory_days is null.
 
 For HYPERSCALER companies only (MSFT, GOOG, AMZN, META):
 - bit_growth_pct: null
@@ -119,7 +141,7 @@ For HYPERSCALER companies only (MSFT, GOOG, AMZN, META):
 - bit_growth_quote: null
 - asp_quote: null
 - inventory_quote: null
-- extraction_notes: Any notable commentary about AI infrastructure, storage demand, or data center spend.
+- extraction_notes: 1-2 sentences on notable AI infrastructure investment, storage demand signals, or data center spend commentary.
 
 Transcript:
 ${rawText.slice(0, 80000)}
