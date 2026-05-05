@@ -1,103 +1,22 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type CompanyStatus = 'idle' | 'running' | 'ingested' | 'review' | 'quarter-mismatch';
+type CellStatus = 'done' | 'empty' | 'error' | 'review' | 'na';
 
-interface DivergentField {
-  field: string;
-  claudeValue: number | string | null;
-  oaiValue: number | string | null;
-  claudeQuote: string | null;
-  oaiQuote: string | null;
-}
-
-interface QuarterMismatchData {
-  extracted: string;
-  selected: string;
-  claudeData: Record<string, unknown>;
-  oaiData: Record<string, unknown>;
-  transcriptUrl: string;
-}
-
-interface CompanyState {
+interface GridCell {
   ticker: string;
-  name: string;
-  type: 'vendor' | 'hyperscaler';
-  sourceLabel: string;
-  defaultUrl: string;
-  status: CompanyStatus;
-  urlOverride: string;
-  pasteText: string;
-  transcriptUrl?: string;
-  divergentFields?: DivergentField[];
-  claudeData?: Record<string, unknown>;
-  oaiData?: Record<string, unknown>;
-  quarterMismatch?: QuarterMismatchData;
+  quarter: string;
+  status: CellStatus;
 }
 
+const TICKERS = ['SNDK', 'MU', 'SSNLF', 'HXSCL', 'MSFT', 'GOOG', 'AMZN', 'META'];
 const QUARTERS = ['Q1 2026', 'Q4 2025', 'Q3 2025', 'Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024'];
-const COMPANY_ORDER = ['SSNLF', 'HXSCL', 'MU', 'SNDK', 'MSFT', 'GOOG', 'AMZN', 'META'];
+const QUARTER_LABELS = ['Q1/26', 'Q4/25', 'Q3/25', 'Q2/25', 'Q1/25', 'Q4/24', 'Q3/24', 'Q2/24'];
 
-// Pre-confirmed Motley Fool transcript URLs per company per historical quarter.
-// Q1 2026 is omitted — the config tab always has the current-quarter URL.
-// SNDK's fiscal year is offset; Q4 2025 → SNDK Q2 FY2026, Q3 2025 → SNDK Q1 FY2026.
-// SSNLF/HXSCL have no Motley Fool historical transcripts — PDFs only.
-const TRANSCRIPT_URLS: Record<string, Record<string, string>> = {
-  MU: {
-    // Q4 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/MU-2025-Q4
-    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/06/25/micron-mu-q3-2025-earnings-call-transcript/',
-    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/03/20/micron-technology-mu-q2-2025-earnings-call-transcr/',
-    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/12/18/micron-technology-mu-q1-2025-earnings-call-transcr/',
-    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/10/micron-technology-mu-q4-2024-earnings-call-transcr/',
-    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/06/26/micron-technology-mu-q3-2024-earnings-call-transcr/',
-    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/03/20/micron-technology-mu-q2-2024-earnings-call-transcr/',
-  },
-  SNDK: {
-    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/29/sandisk-sndk-q2-2026-earnings-call-transcript/',
-    // Q3 2025 (SNDK Q1 FY2026, reported Nov 2025) not on Motley Fool — paste manually if needed
-  },
-  MSFT: {
-    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2025/08/05/microsoft-msft-q4-2025-earnings-call-transcript/',
-    // Q3 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/MSFT-2025-Q3
-    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/microsoft-msft-q2-2025-earnings-call-transcript/',
-    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/microsoft-msft-q1-2025-earnings-call-transcript/',
-    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/30/microsoft-msft-q4-2024-earnings-call-transcript/',
-    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/04/25/microsoft-msft-q3-2024-earnings-call-transcript/',
-    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/01/30/microsoft-msft-q2-2024-earnings-call-transcript/',
-  },
-  GOOG: {
-    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/04/alphabet-googl-q4-2025-earnings-call-transcript/',
-    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/30/alphabet-goog-q3-2025-earnings-call-transcript/',
-    'Q2 2025': 'https://www.fool.com/earnings/call-transcripts/2025/07/23/alphabet-googl-q2-2025-earnings-call-transcript/',
-    // Q1 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/GOOG-2025-Q1
-    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/05/alphabet-goog-q4-2024-earnings-call-transcript/',
-    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/29/alphabet-googl-q3-2024-earnings-call-transcript/',
-    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/23/alphabet-googl-q2-2024-earnings-call-transcript/',
-  },
-  AMZN: {
-    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/02/05/amazon-amzn-q4-2025-earnings-call-transcript/',
-    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/31/amazon-amzn-q3-2025-earnings-call-transcript/',
-    // Q2 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/AMZN-2025-Q2
-    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/05/01/amazon-amzn-q1-2025-earnings-call-transcript/',
-    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/02/06/amazoncom-amzn-q4-2024-earnings-call-transcript/',
-    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/31/amazoncom-amzn-q3-2024-earnings-call-transcript/',
-    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/08/01/amazoncom-amzn-q2-2024-earnings-call-transcript/',
-  },
-  META: {
-    'Q4 2025': 'https://www.fool.com/earnings/call-transcripts/2026/01/28/meta-meta-q4-2025-earnings-call-transcript/',
-    'Q3 2025': 'https://www.fool.com/earnings/call-transcripts/2025/10/29/meta-platforms-meta-q3-2025-earnings-call-transcript/',
-    // Q2 2025 not on Motley Fool — paste from earningscall.ai/stock/transcript/META-2025-Q2
-    'Q1 2025': 'https://www.fool.com/earnings/call-transcripts/2025/04/30/meta-platforms-meta-q1-2025-earnings-call-transcript/',
-    'Q4 2024': 'https://www.fool.com/earnings/call-transcripts/2025/01/29/meta-platforms-meta-q4-2024-earnings-call-transcri/',
-    'Q3 2024': 'https://www.fool.com/earnings/call-transcripts/2024/10/30/meta-platforms-meta-q3-2024-earnings-call-transcri/',
-    'Q2 2024': 'https://www.fool.com/earnings/call-transcripts/2024/07/31/meta-platforms-meta-q2-2024-earnings-call-transcript/',
-  },
-};
-
-const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
+const COMPANY_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
   SNDK:  { name: 'SanDisk',   type: 'vendor' },
   MU:    { name: 'Micron',    type: 'vendor' },
   SSNLF: { name: 'Samsung',   type: 'vendor' },
@@ -108,446 +27,385 @@ const BASE_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }
   META:  { name: 'Meta',      type: 'hyperscaler' },
 };
 
-function sourceLabel(ticker: string, defaultUrl: string): string {
-  if (ticker === 'SSNLF') return 'Samsung IR PDF · auto-pattern';
-  if (defaultUrl.includes('yahoo.com')) return 'Yahoo Finance';
-  if (defaultUrl.includes('fool.com')) return 'Motley Fool';
-  if (defaultUrl.includes('gurufocus')) return 'GuruFocus';
-  if (defaultUrl) return 'URL';
-  return '—';
-}
+const SNDK_NA = new Set(['Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024']);
 
-// ── Badge ─────────────────────────────────────────────────────────────────────
+// ── Status cell rendering ─────────────────────────────────────────────────────
 
-function Badge({ status }: { status: CompanyStatus }) {
-  const styles: Record<CompanyStatus, React.CSSProperties> = {
-    idle:               { background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)' },
-    running:            { background: '#16120a', color: 'var(--gold)',       border: '0.5px solid rgba(201,168,76,0.27)' },
-    ingested:           { background: '#0a160e', color: '#4a9a6a',           border: '0.5px solid rgba(74,154,106,0.27)' },
-    review:             { background: '#16120a', color: 'var(--gold)',       border: '0.5px solid rgba(201,168,76,0.27)' },
-    'quarter-mismatch': { background: '#160f08', color: '#c9784c',          border: '0.5px solid rgba(201,120,76,0.4)' },
-  };
-  const labels: Record<CompanyStatus, React.ReactNode> = {
-    idle:               'idle',
-    running:            <><AnimDot />running</>,
-    ingested:           '✓ ingested',
-    review:             '! review',
-    'quarter-mismatch': '? quarter',
-  };
-  return (
-    <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap', ...styles[status] }}>
-      {labels[status]}
-    </span>
-  );
-}
-
-function AnimDot() {
-  return <span style={{ display: 'inline-block', marginRight: 3, animation: 'pulseDot 1.2s ease-in-out infinite' }}>·</span>;
-}
-
-// ── Divergence panel ──────────────────────────────────────────────────────────
-
-function DivergencePanel({ ticker, name, fields, onUseClaude, onUseOAI }: {
-  ticker: string;
-  name: string;
-  fields: DivergentField[];
-  onUseClaude: (field: string) => void;
-  onUseOAI: (field: string) => void;
-}) {
-  return (
-    <div style={{ background: '#0f0e08', border: '0.5px solid rgba(201,168,76,0.2)', borderRadius: 8, padding: '14px 16px', marginTop: 12 }}>
-      <div style={{ fontSize: 9, color: 'var(--gold)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
-        {name} ({ticker}) · resolve divergence
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 6, marginBottom: 6 }}>
-        <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6a6058' }}>Field</span>
-        <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--gold)' }}>Claude</span>
-        <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#4a7fa5' }}>OpenAI</span>
-      </div>
-      {fields.map(f => (
-        <div key={f.field} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 1fr', gap: 6, marginBottom: 10 }}>
-          <span style={{ fontSize: 10, color: '#6a6058', paddingTop: 2 }}>{f.field}</span>
-          <div>
-            <div style={{ fontSize: 10, color: 'var(--gold)' }}>
-              {f.claudeValue != null ? String(f.claudeValue) + (f.field.includes('pct') ? '%' : f.field === 'mgmt_tone_score' ? ' / 5' : '') : '—'}
-            </div>
-            {f.claudeQuote && (
-              <div style={{ fontSize: 9, color: 'rgba(201,168,76,0.53)', fontStyle: 'italic', lineHeight: 1.5, borderLeft: '1.5px solid rgba(201,168,76,0.27)', paddingLeft: 6, marginTop: 2 }}>
-                &ldquo;{f.claudeQuote.substring(0, 100)}{f.claudeQuote.length > 100 ? '…' : ''}&rdquo;
-              </div>
-            )}
-            <button onClick={() => onUseClaude(f.field)} style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#16120a', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' }}>
-              use Claude →
-            </button>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, color: '#4a7fa5' }}>
-              {f.oaiValue != null ? String(f.oaiValue) + (f.field.includes('pct') ? '%' : f.field === 'mgmt_tone_score' ? ' / 5' : '') : '—'}
-            </div>
-            {f.oaiQuote && (
-              <div style={{ fontSize: 9, color: 'rgba(74,127,165,0.53)', fontStyle: 'italic', lineHeight: 1.5, borderLeft: '1.5px solid rgba(74,127,165,0.27)', paddingLeft: 6, marginTop: 2 }}>
-                &ldquo;{f.oaiQuote.substring(0, 100)}{f.oaiQuote.length > 100 ? '…' : ''}&rdquo;
-              </div>
-            )}
-            <button onClick={() => onUseOAI(f.field)} style={{ fontSize: 9, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4, background: '#0a0f16', color: '#4a7fa5', border: '0.5px solid rgba(74,127,165,0.27)' }}>
-              use OpenAI →
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+function CellIcon({ status }: { status: CellStatus }) {
+  if (status === 'done')   return <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#2a5a32' }} />;
+  if (status === 'empty')  return <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#1a1812', border: '0.5px solid #2a2820' }} />;
+  if (status === 'error')  return <span style={{ color: '#6a2020', fontSize: 11 }}>✕</span>;
+  if (status === 'review') return <span style={{ color: '#6a5020', fontSize: 11 }}>▲</span>;
+  return <span style={{ color: '#1e1c18', fontSize: 10 }}>—</span>;
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function IngestPage() {
-  const [quarter, setQuarter] = useState('Q1 2026');
-  const [selectedTicker, setSelectedTicker] = useState('all');
-  const [companies, setCompanies] = useState<Record<string, CompanyState>>({});
-  const [isLocal, setIsLocal] = useState(true);
-  const [resolveTarget, setResolveTarget] = useState<string | null>(null);
-  const divergenceRef = useRef<HTMLDivElement>(null);
-  const companiesRef = useRef<Record<string, CompanyState>>({});
-  companiesRef.current = companies;
+  const [grid, setGrid] = useState<GridCell[]>([]);
+  const [selectedTicker, setSelectedTicker] = useState<string>('SNDK');
+  const [selectedQuarter, setSelectedQuarter] = useState<string>('Q1 2026');
+  const [defaultUrl, setDefaultUrl] = useState<string>('');
+  const [urlOverride, setUrlOverride] = useState<string>('');
+  const [pasteText, setPasteText] = useState<string>('');
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [naTooltip, setNaTooltip] = useState<string | null>(null);
 
-  useEffect(() => {
-    setIsLocal(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  // Company dropdown open state
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [quarterOpen, setQuarterOpen] = useState(false);
+
+  const loadGrid = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ingest/status');
+      const data = await res.json();
+      setGrid(data.grid ?? []);
+    } catch {
+      // leave grid empty
+    }
   }, []);
 
-  // Load config + check already-ingested on quarter change — also resets all state
+  const loadDefaultUrl = useCallback(async (ticker: string, quarter: string) => {
+    try {
+      const res = await fetch(`/api/ingest/config?ticker=${ticker}&quarter=${encodeURIComponent(quarter)}`);
+      const data = await res.json();
+      setDefaultUrl(data.defaultUrl ?? '');
+      setUrlOverride('');
+    } catch {
+      setDefaultUrl('');
+    }
+  }, []);
+
+  useEffect(() => { loadGrid(); }, [loadGrid]);
+
   useEffect(() => {
-    fetch('/api/sheets?action=data')
-      .then(r => r.json())
-      .then(data => {
-        const configMap: Record<string, string> = {};
-        for (const row of data.config || []) {
-          configMap[row.ticker] = row.default_url ?? '';
-        }
-        const ingestedTickers = new Set(
-          (data.signals || [])
-            .filter((s: Record<string, string>) => s.quarter === quarter)
-            .map((s: Record<string, string>) => s.ticker)
-        );
-        const states: Record<string, CompanyState> = {};
-        for (const ticker of COMPANY_ORDER) {
-          const meta = BASE_META[ticker];
-          const defaultUrl = configMap[ticker] ?? '';
-          states[ticker] = {
-            ticker, name: meta.name, type: meta.type,
-            sourceLabel: sourceLabel(ticker, defaultUrl),
-            defaultUrl,
-            status: ingestedTickers.has(ticker) ? 'ingested' : 'idle',
-            urlOverride: TRANSCRIPT_URLS[ticker]?.[quarter] ?? '',
-            pasteText: '',
-          };
-        }
-        setCompanies(states);
-        setResolveTarget(null);
-      })
-      .catch(() => {
-        const states: Record<string, CompanyState> = {};
-        for (const ticker of COMPANY_ORDER) {
-          const meta = BASE_META[ticker];
-          states[ticker] = {
-            ticker, name: meta.name, type: meta.type,
-            sourceLabel: sourceLabel(ticker, ''), defaultUrl: '',
-            status: 'idle', urlOverride: TRANSCRIPT_URLS[ticker]?.[quarter] ?? '',
-            pasteText: '',
-          };
-        }
-        setCompanies(states);
-        setResolveTarget(null);
-      });
-  }, [quarter]);
+    loadDefaultUrl(selectedTicker, selectedQuarter);
+    setPasteText('');
+    setPdfFile(null);
+    setStatus('');
+  }, [selectedTicker, selectedQuarter, loadDefaultUrl]);
 
-  function update(ticker: string, patch: Partial<CompanyState>) {
-    setCompanies(prev => ({ ...prev, [ticker]: { ...prev[ticker], ...patch } }));
+  function cellStatus(ticker: string, quarter: string): CellStatus {
+    return grid.find(c => c.ticker === ticker && c.quarter === quarter)?.status ?? 'empty';
   }
 
-  async function runOne(ticker: string) {
-    const c = companiesRef.current[ticker];
-    if (!c || c.status === 'running') return;
+  function handleCellClick(ticker: string, quarter: string) {
+    if (ticker === 'SNDK' && SNDK_NA.has(quarter)) {
+      setNaTooltip(`${ticker} · ${quarter}`);
+      setTimeout(() => setNaTooltip(null), 3000);
+      return;
+    }
+    setSelectedTicker(ticker);
+    setSelectedQuarter(quarter);
+    setCompanyOpen(false);
+    setQuarterOpen(false);
+  }
 
-    update(ticker, { status: 'running', quarterMismatch: undefined });
+  async function handleIngest() {
+    setLoading(true);
+    setStatus('');
 
     try {
+      let sourceType: 'paste' | 'pdf' | 'url';
+      let body: Record<string, unknown> = { ticker: selectedTicker, quarter: selectedQuarter };
+
+      if (pasteText.trim()) {
+        sourceType = 'paste';
+        body = { ...body, sourceType, rawText: pasteText.trim() };
+      } else if (pdfFile) {
+        sourceType = 'pdf';
+        const b64 = await fileToBase64(pdfFile);
+        body = { ...body, sourceType, pdfBase64: b64 };
+      } else {
+        const fetchUrl = urlOverride.trim() || defaultUrl;
+        if (!fetchUrl) {
+          setStatus('No input: paste text, upload PDF, or enter a URL.');
+          setLoading(false);
+          return;
+        }
+        sourceType = 'url';
+        body = { ...body, sourceType, url: fetchUrl };
+      }
+
       const res = await fetch('/api/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, quarter, urlOverride: c.urlOverride || undefined, pasteText: c.pasteText || undefined }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
 
-      if (data.status === 'ingested') {
-        update(ticker, { status: 'ingested', transcriptUrl: data.transcriptUrl });
-      } else if (data.status === 'review') {
-        update(ticker, {
-          status: 'review',
-          transcriptUrl: data.transcriptUrl,
-          divergentFields: data.divergentFields,
-          claudeData: data.claudeData,
-          oaiData: data.oaiData,
-        });
-        setResolveTarget(ticker);
-        setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-      } else if (data.status === 'quarter-mismatch') {
-        update(ticker, {
-          status: 'quarter-mismatch',
-          quarterMismatch: {
-            extracted: data.extractedQuarter,
-            selected: data.selectedQuarter,
-            claudeData: data.claudeData,
-            oaiData: data.oaiData,
-            transcriptUrl: data.transcriptUrl,
-          },
-        });
+      if (data.status === 'quarter-mismatch') {
+        setStatus(`Quarter mismatch: transcript looks like ${data.extractedQuarter} but you selected ${data.selectedQuarter}. Re-run to confirm.`);
+        // Re-send with the selected quarter (force through)
+      } else if (data.success) {
+        setStatus('✓ Ingested successfully.');
+        setPasteText('');
+        setPdfFile(null);
+        await loadGrid();
       } else {
-        update(ticker, { status: 'idle' });
+        setStatus(`Error: ${data.error ?? 'Unknown error'}`);
       }
-    } catch {
-      update(ticker, { status: 'idle' });
+    } catch (e) {
+      setStatus(`Error: ${String(e)}`);
     }
+
+    setLoading(false);
   }
 
-  async function proceedAnyway(ticker: string) {
-    const c = companiesRef.current[ticker];
-    if (!c?.quarterMismatch) return;
-
-    update(ticker, { status: 'running' });
-
-    try {
-      const res = await fetch('/api/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'force-save',
-          ticker,
-          quarter,
-          claudeData: c.quarterMismatch.claudeData,
-          oaiData: c.quarterMismatch.oaiData,
-          transcriptUrl: c.quarterMismatch.transcriptUrl,
-        }),
-      });
-      const data = await res.json();
-
-      if (data.status === 'ingested') {
-        update(ticker, { status: 'ingested', transcriptUrl: data.transcriptUrl, quarterMismatch: undefined });
-      } else if (data.status === 'review') {
-        update(ticker, {
-          status: 'review',
-          transcriptUrl: data.transcriptUrl,
-          divergentFields: data.divergentFields,
-          claudeData: data.claudeData,
-          oaiData: data.oaiData,
-          quarterMismatch: undefined,
-        });
-        setResolveTarget(ticker);
-        setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-      } else {
-        update(ticker, { status: 'idle', quarterMismatch: undefined });
-      }
-    } catch {
-      update(ticker, { status: 'idle', quarterMismatch: undefined });
-    }
-  }
-
-  function runAll() {
-    COMPANY_ORDER
-      .filter(t => companiesRef.current[t]?.status !== 'ingested')
-      .filter(t => !((t === 'SSNLF' || t === 'HXSCL') && quarter !== 'Q1 2026'))
-      .forEach(t => runOne(t));
-  }
-
-  async function resolveField(ticker: string, field: string, source: 'claude' | 'oai') {
-    const c = companies[ticker];
-    if (!c?.divergentFields) return;
-    const sourceData = source === 'claude' ? c.claudeData : c.oaiData;
-    const merged = { ...(c.claudeData || {}), [field]: sourceData?.[field] };
-    const remaining = c.divergentFields.filter(f => f.field !== field);
-
-    if (remaining.length === 0) {
-      try {
-        await fetch('/api/ingest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'resolve', ticker, quarter, fields: merged, transcriptUrl: c.transcriptUrl ?? '' }),
-        });
-      } catch { /* silent */ }
-      update(ticker, { status: 'ingested', divergentFields: [] });
-      setResolveTarget(null);
-    } else {
-      update(ticker, { claudeData: merged, divergentFields: remaining });
-    }
-  }
-
-  const reviewCompany = resolveTarget ? companies[resolveTarget] : null;
-  const anyRunning = Object.values(companies).some(c => c.status === 'running');
-
-  function rowBorder(status: CompanyStatus) {
-    if (status === 'ingested')           return 'rgba(74,154,106,0.2)';
-    if (status === 'review')             return 'rgba(201,168,76,0.27)';
-    if (status === 'quarter-mismatch')   return 'rgba(201,120,76,0.4)';
-    return 'var(--border)';
-  }
+  const companyLabel = `${COMPANY_META[selectedTicker]?.name ?? selectedTicker} (${selectedTicker})`;
 
   return (
-    <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
-      <style>{`@keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.25} }`}</style>
+    <div style={{ background: '#0e0c09', minHeight: '100vh', padding: '0 0 40px' }}>
+      <style>{`
+        .grid-cell:hover { background: #161410; }
+        .grid-cell.sel { background: #16120a; border-color: rgba(201,168,76,0.4) !important; }
+        .fake-dd { position: relative; }
+        .fake-dd-menu { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; background: #161410; border: 0.5px solid #2a2520; border-radius: 5px; margin-top: 2px; max-height: 220px; overflow-y: auto; }
+        .fake-dd-item { padding: 6px 10px; font-size: 11px; color: #c9a84c; cursor: pointer; }
+        .fake-dd-item:hover { background: #1e1a14; }
+        .upload-zone { border: 0.5px dashed #1e1c18; border-radius: 5px; padding: 10px; text-align: center; font-size: 10px; color: #252218; cursor: pointer; }
+        .upload-zone:hover { border-color: #2a2520; }
+        @keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.25} }
+      `}</style>
 
-      {/* Production banner */}
-      {!isLocal && (
-        <div style={{ background: '#16120a', border: '0.5px solid rgba(201,168,76,0.4)', borderRadius: 8, padding: '12px 16px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 11, color: '#d4c090' }}>⚠ Ingest is disabled on Vercel — transcript sites block data center IPs.</span>
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-            Run <code style={{ background: '#1e1c18', padding: '1px 5px', borderRadius: 3, fontSize: 10, color: 'var(--gold)' }}>scripts/start-ingest.sh</code> locally.
-          </span>
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 14, padding: '20px 24px' }}>
 
-      {/* Run bar */}
-      <div style={{ background: 'var(--bg-surface)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const }}>Quarter</span>
-        <select
-          value={quarter}
-          onChange={e => {
-            setQuarter(e.target.value);
-            setCompanies(prev => {
-              const next = { ...prev };
-              Object.keys(next).forEach(t => {
-                next[t] = { ...next[t], urlOverride: '' };
-              });
-              return next;
-            });
-          }}
-          style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#f5f0e8', fontSize: 11, padding: '5px 8px', width: 95, outline: 'none' }}
-        >
-          {QUARTERS.map(q => <option key={q} value={q}>{q}</option>)}
-        </select>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' as const, marginLeft: 8 }}>Company</span>
-        <select
-          value={selectedTicker}
-          onChange={e => setSelectedTicker(e.target.value)}
-          style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: 'var(--gold)', fontSize: 11, padding: '5px 8px', width: 160, outline: 'none' }}
-        >
-          <option value="all">All 8 companies</option>
-          {COMPANY_ORDER.map(t => <option key={t} value={t}>{companies[t]?.name ?? t} ({t})</option>)}
-        </select>
-        <button
-          onClick={runAll}
-          disabled={anyRunning}
-          style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const, padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const, background: '#1e1c18', color: 'var(--gold)', border: '0.5px solid rgba(201,168,76,0.27)' }}
-        >
-          Run all
-        </button>
-        <button
-          onClick={() => selectedTicker === 'all' ? runAll() : runOne(selectedTicker)}
-          disabled={anyRunning}
-          style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' as const, padding: '6px 16px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap' as const, background: 'var(--gold)', color: '#0e0c09', border: 'none' }}
-        >
-          Run selected
-        </button>
-      </div>
+        {/* ── Left: grid ── */}
+        <div style={{ flex: '0 0 390px', background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
+          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
+            Data history status
+          </div>
 
-      {/* Company list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {COMPANY_ORDER.map(ticker => {
-          const c = companies[ticker];
-          if (!c) return null;
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ fontSize: 9, fontWeight: 500, color: '#3a3528', letterSpacing: '0.06em', padding: '3px 4px', textAlign: 'left', borderBottom: '0.5px solid #1e1c18', width: 30 }} />
+                {TICKERS.map(t => (
+                  <th key={t} style={{ fontSize: 9, fontWeight: 500, color: '#3a3528', letterSpacing: '0.06em', padding: '3px 4px', textAlign: 'center', borderBottom: '0.5px solid #1e1c18' }}>
+                    {t}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {QUARTERS.map((q, qi) => (
+                <tr key={q}>
+                  <td style={{ fontSize: 9, color: '#2e2c24', paddingLeft: 6, fontWeight: 500, borderBottom: '0.5px solid #161410', cursor: 'default' }}>
+                    {QUARTER_LABELS[qi]}
+                  </td>
+                  {TICKERS.map(ticker => {
+                    const st = cellStatus(ticker, q);
+                    const isNA = st === 'na';
+                    const isSel = ticker === selectedTicker && q === selectedQuarter;
+                    return (
+                      <td
+                        key={ticker}
+                        className={`grid-cell${isSel ? ' sel' : ''}`}
+                        onClick={() => handleCellClick(ticker, q)}
+                        title={isNA ? "SanDisk IPO'd in 2025 — no prior quarters exist" : `${ticker} · ${q}`}
+                        style={{ textAlign: 'center', border: '0.5px solid #161410', height: 24, cursor: isNA ? 'default' : 'pointer' }}
+                      >
+                        <CellIcon status={st} />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-          return (
-            <div key={ticker} style={{ background: 'var(--bg-surface)', border: `0.5px solid ${rowBorder(c.status)}`, borderRadius: 8, padding: '10px 14px' }}>
-
-              {/* Top line: ticker · name · source · badge · action */}
-              <div style={{ display: 'grid', gridTemplateColumns: '72px 90px 1fr 105px 60px', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' }}>{ticker}</span>
-                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{c.name}</span>
-                <span style={{ fontSize: 9, color: 'var(--text-ghost)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{c.sourceLabel}</span>
-                <Badge status={c.status} />
-                {c.status === 'ingested' && c.transcriptUrl
-                  ? <button onClick={() => window.open(c.transcriptUrl, '_blank')} style={{ fontSize: 10, color: '#4a7fa5', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'right' as const }}>view →</button>
-                  : c.status === 'review'
-                  ? <button onClick={() => { setResolveTarget(ticker); setTimeout(() => divergenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} style={{ fontSize: 10, color: 'var(--gold)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'right' as const }}>resolve →</button>
-                  : <span />
-                }
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+            {[
+              { label: 'done',    el: <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#2a5a32' }} /> },
+              { label: 'empty',   el: <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#1a1812', border: '0.5px solid #2a2820' }} /> },
+              { label: 'error',   el: <span style={{ color: '#6a2020', fontSize: 11 }}>✕</span> },
+              { label: 'review',  el: <span style={{ color: '#6a5020', fontSize: 11 }}>▲</span> },
+              { label: 'pre-IPO', el: <span style={{ color: '#252218', fontSize: 10 }}>—</span> },
+            ].map(({ label, el }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: '#2e2c24' }}>
+                {el} {label}
               </div>
+            ))}
+          </div>
 
-              {/* Quarter mismatch warning */}
-              {c.status === 'quarter-mismatch' && c.quarterMismatch && (
-                <div style={{ marginTop: 8, padding: '8px 10px', background: '#160f08', border: '0.5px solid rgba(201,120,76,0.3)', borderRadius: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 10, color: '#c9784c', flex: 1 }}>
-                    Transcript looks like <strong>{c.quarterMismatch.extracted}</strong> but you selected <strong>{c.quarterMismatch.selected}</strong> — proceed anyway?
-                  </span>
-                  <button
-                    onClick={() => proceedAnyway(ticker)}
-                    style={{ fontSize: 9, padding: '3px 10px', borderRadius: 3, background: '#1e1208', color: '#c9784c', border: '0.5px solid rgba(201,120,76,0.4)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
-                  >
-                    Proceed
-                  </button>
-                  <button
-                    onClick={() => update(ticker, { status: 'idle', quarterMismatch: undefined })}
-                    style={{ fontSize: 9, padding: '3px 10px', borderRadius: 3, background: '#161410', color: 'var(--text-muted)', border: '0.5px solid var(--border)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-
-              {/* Paste textarea — for blocked sources (earningscall.ai, investing.com, PDFs) */}
-              <textarea
-                placeholder="or paste transcript text here to bypass URL fetch"
-                value={c.pasteText}
-                onChange={e => update(ticker, { pasteText: e.target.value })}
-                rows={c.pasteText ? 5 : 2}
-                style={{ width: '100%', marginTop: 8, background: '#0f0d0a', border: `0.5px solid ${c.pasteText ? '#3a3020' : '#1e1c18'}`, borderRadius: 4, color: '#c8b87a', fontSize: 9, padding: '4px 8px', outline: 'none', resize: 'vertical', fontFamily: 'monospace', boxSizing: 'border-box' as const }}
-              />
-
-              {/* Bottom line: open → · url input (placeholder = default url) · run → */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                {c.defaultUrl && (
-                  <a href={c.defaultUrl} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 9, color: '#4a7fa5', textDecoration: 'underline', whiteSpace: 'nowrap' as const }}>
-                    open →
-                  </a>
-                )}
-                <input
-                  placeholder={c.defaultUrl || 'paste working URL here'}
-                  value={c.urlOverride}
-                  onChange={e => update(ticker, { urlOverride: e.target.value })}
-                  style={{ flex: 1, background: '#161410', border: '0.5px solid #2a2520', borderRadius: 4, color: '#f5f0e8', fontSize: 10, padding: '4px 8px', outline: 'none' }}
-                />
-                {(() => {
-                  const pdfOnly = (ticker === 'SSNLF' || ticker === 'HXSCL') && quarter !== 'Q1 2026';
-                  return (
-                    <button
-                      onClick={() => runOne(ticker)}
-                      disabled={c.status === 'running' || pdfOnly}
-                      title={pdfOnly ? 'Historical data via PDF only — paste text above when available' : undefined}
-                      style={{ fontSize: 9, color: (c.status === 'running' || pdfOnly) ? 'var(--text-ghost)' : 'var(--gold)', padding: '3px 10px', border: '0.5px solid rgba(201,168,76,0.27)', borderRadius: 3, background: '#16120a', cursor: (c.status === 'running' || pdfOnly) ? 'default' : 'pointer', whiteSpace: 'nowrap' as const }}
-                    >
-                      {pdfOnly ? 'pdf only' : c.status === 'running' ? '…' : 'run →'}
-                    </button>
-                  );
-                })()}
-              </div>
-
+          {/* NA tooltip */}
+          {naTooltip && (
+            <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 7, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
+              SanDisk IPO&rsquo;d in 2025 — no prior quarters exist.
             </div>
-          );
-        })}
-      </div>
+          )}
 
-      {/* Divergence panel */}
-      {reviewCompany && reviewCompany.divergentFields && reviewCompany.divergentFields.length > 0 && (
-        <div ref={divergenceRef}>
-          <DivergencePanel
-            ticker={reviewCompany.ticker}
-            name={reviewCompany.name}
-            fields={reviewCompany.divergentFields}
-            onUseClaude={field => resolveField(reviewCompany.ticker, field, 'claude')}
-            onUseOAI={field => resolveField(reviewCompany.ticker, field, 'oai')}
-          />
+          <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 7, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
+            Click any cell to load company + quarter into the ingest panel. Gold outline = selected ({COMPANY_META[selectedTicker]?.name} · {selectedQuarter}).
+          </div>
         </div>
-      )}
+
+        {/* ── Right: panel ── */}
+        <div style={{ flex: 1, minWidth: 0, background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
+          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
+            Data ingestion
+          </div>
+
+          {/* Company + Quarter selectors */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                Company <span style={{ fontSize: 8, color: '#252218', textTransform: 'none', letterSpacing: 0, marginLeft: 3 }}>(set by grid)</span>
+              </div>
+              <div className="fake-dd">
+                <div
+                  onClick={() => { setCompanyOpen(o => !o); setQuarterOpen(false); }}
+                  style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#c9a84c', fontSize: 11, padding: '5px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  {companyLabel}
+                  <span style={{ fontSize: 8, color: '#3a3528', marginLeft: 6 }}>▾</span>
+                </div>
+                {companyOpen && (
+                  <div className="fake-dd-menu">
+                    {TICKERS.map(t => (
+                      <div
+                        key={t}
+                        className="fake-dd-item"
+                        onClick={() => { setSelectedTicker(t); setCompanyOpen(false); }}
+                      >
+                        {COMPANY_META[t].name} ({t})
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                Quarter <span style={{ fontSize: 8, color: '#252218', textTransform: 'none', letterSpacing: 0, marginLeft: 3 }}>(set by grid)</span>
+              </div>
+              <div className="fake-dd">
+                <div
+                  onClick={() => { setQuarterOpen(o => !o); setCompanyOpen(false); }}
+                  style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#c9a84c', fontSize: 11, padding: '5px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  {selectedQuarter}
+                  <span style={{ fontSize: 8, color: '#3a3528', marginLeft: 6 }}>▾</span>
+                </div>
+                {quarterOpen && (
+                  <div className="fake-dd-menu">
+                    {QUARTERS.map(q => (
+                      <div
+                        key={q}
+                        className="fake-dd-item"
+                        onClick={() => { setSelectedQuarter(q); setQuarterOpen(false); }}
+                      >
+                        {q}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ borderTop: '0.5px solid #1a1812', margin: '12px 0' }} />
+
+          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Input source <span style={{ color: '#252218', textTransform: 'none', letterSpacing: 0, fontSize: 8, marginLeft: 4 }}>· first populated wins · raw text always stored</span>
+          </div>
+
+          {/* Priority 1: Paste */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+              <div style={{ width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500, flexShrink: 0, background: '#0d1a08', color: '#2a5a32', border: '0.5px solid #2a4a2a' }}>1</div>
+              <span style={{ fontSize: 10, color: '#6a6050' }}>Paste transcript</span>
+              <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>highest priority</span>
+            </div>
+            <textarea
+              value={pasteText}
+              onChange={e => setPasteText(e.target.value)}
+              placeholder="paste raw transcript text here…"
+              rows={pasteText ? 6 : 3}
+              style={{ width: '100%', background: '#0b0906', border: `0.5px solid ${pasteText ? '#3a3020' : '#1e1c18'}`, borderRadius: 5, color: '#c8b87a', fontSize: 10, padding: '6px 8px', outline: 'none', resize: 'vertical', fontFamily: 'monospace', boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 4, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
+              Use when you have the text. Stored verbatim. No fetch needed.
+            </div>
+          </div>
+
+          {/* Priority 2: PDF */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+              <div style={{ width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500, flexShrink: 0, background: '#161008', color: '#6a5020', border: '0.5px solid #4a3a18' }}>2</div>
+              <span style={{ fontSize: 10, color: '#6a6050' }}>Upload PDF</span>
+              <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>if no paste</span>
+            </div>
+            <label className="upload-zone" style={{ display: 'block' }}>
+              <input
+                type="file"
+                accept=".pdf"
+                style={{ display: 'none' }}
+                onChange={e => setPdfFile(e.target.files?.[0] ?? null)}
+              />
+              {pdfFile ? (
+                <span style={{ color: '#6a5020' }}>{pdfFile.name} ({(pdfFile.size / 1024).toFixed(0)} KB)</span>
+              ) : (
+                'drag PDF here or click to choose'
+              )}
+            </label>
+            <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 4, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
+              For Samsung / SK Hynix PDFs. Text extracted then stored.
+            </div>
+          </div>
+
+          {/* Priority 3: URL */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+              <div style={{ width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500, flexShrink: 0, background: '#100a08', color: '#5a2a20', border: '0.5px solid #3a2018' }}>3</div>
+              <span style={{ fontSize: 10, color: '#6a6050' }}>Default URL</span>
+              <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>fallback · editable</span>
+            </div>
+            <input
+              type="text"
+              value={urlOverride}
+              onChange={e => setUrlOverride(e.target.value)}
+              placeholder={defaultUrl || 'no default URL for this quarter — enter one or paste above'}
+              style={{ display: 'block', width: '100%', background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#6a6050', fontSize: 10, padding: '5px 8px', outline: 'none', fontFamily: 'sans-serif', boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 4, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
+              Pre-populated from config table. Override if wrong. Server fetches + stores raw text.
+            </div>
+          </div>
+
+          <div style={{ borderTop: '0.5px solid #1a1812', margin: '12px 0' }} />
+
+          <button
+            onClick={handleIngest}
+            disabled={loading}
+            style={{ width: '100%', padding: 8, background: '#0b0906', border: '0.5px solid rgba(201,168,76,0.55)', borderRadius: 5, color: '#c9a84c', fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: loading ? 'default' : 'pointer', fontFamily: 'sans-serif', opacity: loading ? 0.6 : 1 }}
+          >
+            {loading ? <span style={{ animation: 'pulseDot 1.2s ease-in-out infinite', display: 'inline-block' }}>ingesting…</span> : 'Ingest → extract signals'}
+          </button>
+
+          <div style={{ fontSize: 9, color: status.startsWith('✓') ? '#4a9a6a' : status.startsWith('Error') ? '#9a4a4a' : '#252218', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
+            {status || 'stores raw transcript → extracts signals → grid cell turns green'}
+          </div>
+        </div>
+      </div>
     </div>
   );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }

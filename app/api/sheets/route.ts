@@ -1,6 +1,7 @@
 // app/api/sheets/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
+import { supabase } from '@/lib/supabase';
 
 const SHEET_ID = '1RFYBmGqCeoG0RwcsXZ5HHrCFqa3ViN-J26g-sAAQEDc';
 
@@ -48,34 +49,45 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const action = searchParams.get('action');
 
-  // Structured data endpoint used by page components
+  // Structured data endpoint used by page components — reads from Supabase
   if (action === 'data') {
     try {
-      const sheets = getSheets();
-      const [sigRes, cfgRes] = await Promise.all([
-        sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'signals!A:R' }),
-        sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'config!A:F' }),
+      const [{ data: signalsRows }, { data: configRows }] = await Promise.all([
+        supabase.from('signals').select('*').order('quarter', { ascending: true }),
+        supabase.from('config').select('ticker, quarter, company, type, default_url'),
       ]);
 
-      const signals = parseTab(sigRes.data.values || []);
-      const config = parseTab(cfgRes.data.values || []);
+      type SigRow = Record<string, unknown> & { quarter?: string; extracted_at?: string };
+      type CfgRow = Record<string, unknown> & { ticker?: string; quarter?: string; company?: string; type?: string; default_url?: string };
 
-      // Derive metadata from signals
-      const quarters = [...new Set(signals.map(r => r.quarter).filter(Boolean))];
-      quarters.sort(); // lexicographic works for "Q1 2026" format
+      const signals = ((signalsRows ?? []) as SigRow[]).map(r => ({
+        ...r,
+        ingested_at: (r.extracted_at as string) ?? '',
+      }));
+
+      const config = ((configRows ?? []) as CfgRow[]).map(r => ({
+        ticker: r.ticker ?? '',
+        quarter: r.quarter ?? '',
+        company: r.company ?? '',
+        type: r.type ?? '',
+        default_url: r.default_url ?? '',
+      }));
+
+      const quarters = [...new Set(signals.map(r => r.quarter as string).filter(Boolean))];
+      quarters.sort();
       const latestQuarter = quarters.at(-1) ?? '';
 
       const latestRows = signals.filter(r => r.quarter === latestQuarter);
       const sourcesCount = latestRows.length;
       const totalSources = 8;
 
-      const dates = latestRows.map(r => r.ingested_at).filter(Boolean);
+      const dates = latestRows.map(r => r.ingested_at as string).filter(Boolean);
       dates.sort();
       const lastIngested = dates.at(-1) ?? '';
 
       return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested });
     } catch (error) {
-      console.error('Sheets data error:', error);
+      console.error('Supabase data error:', error);
       return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '' });
     }
   }

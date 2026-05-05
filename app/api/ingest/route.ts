@@ -1,9 +1,6 @@
-// app/api/ingest/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { google } from 'googleapis';
-
-const SHEET_ID = '1RFYBmGqCeoG0RwcsXZ5HHrCFqa3ViN-J26g-sAAQEDc';
+import { supabase } from '@/lib/supabase';
 
 const COMPANY_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler' }> = {
   SNDK:  { name: 'SanDisk',   type: 'vendor' },
@@ -16,129 +13,7 @@ const COMPANY_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler
   META:  { name: 'Meta',      type: 'hyperscaler' },
 };
 
-// Fields saved to sheets
-interface ExtractedData {
-  bit_growth_pct: number | null;
-  capex_pct: number | null;
-  asp_change_pct: number | null;
-  inventory_days: number | null;
-  mgmt_tone_score: number | null;
-  node_transition_note: string | null;
-  bit_growth_quote: string | null;
-  capex_quote: string | null;
-  asp_quote: string | null;
-  inventory_quote: string | null;
-  mgmt_tone_quote: string | null;
-}
-
-// Raw extraction — includes transcript quarter/year for mismatch detection
-interface RawExtraction extends ExtractedData {
-  transcript_quarter: string | null;
-  transcript_year: number | null;
-}
-
-interface DivergentField {
-  field: string;
-  claudeValue: number | string | null;
-  oaiValue: number | string | null;
-  claudeQuote: string | null;
-  oaiQuote: string | null;
-}
-
-// ── Auth ─────────────────────────────────────────────────────────────────────
-
-function getSheets() {
-  let auth;
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-  } else {
-    const path = require('path');
-    const fs = require('fs');
-    let dir = process.cwd();
-    while (dir !== path.dirname(dir)) {
-      if (fs.existsSync(path.join(dir, 'credentials.json'))) break;
-      dir = path.dirname(dir);
-    }
-    auth = new google.auth.GoogleAuth({
-      keyFile: path.join(dir, 'credentials.json'),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-  }
-  return google.sheets({ version: 'v4', auth });
-}
-
-function parseTab(rows: string[][]): Record<string, string>[] {
-  if (rows.length < 2) return [];
-  const headers = rows[0];
-  return rows.slice(1).map(row => {
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
-    return obj;
-  });
-}
-
-// ── Samsung URL construction ──────────────────────────────────────────────────
-
-function samsungPdfUrl(quarter: string): string | null {
-  const m = quarter.match(/Q(\d)\s+(\d{4})/i);
-  if (!m) return null;
-  return `https://images.samsung.com/is/content/samsung/assets/global/ir/docs/${m[2]}_${m[1]}Q_conference_eng.pdf`;
-}
-
-// ── PDF text extraction ───────────────────────────────────────────────────────
-
-async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
-  const bytes = new Uint8Array(buffer);
-  const str = new TextDecoder('latin1').decode(bytes);
-  let text = '';
-
-  const btMatches = str.matchAll(/BT([\s\S]*?)ET/g);
-  for (const match of btMatches) {
-    const block = match[1];
-    const tjMatches = block.matchAll(/\(((?:[^()\\]|\\[\\()nrtbf])*)\)\s*T[jJ]/g);
-    for (const tj of tjMatches) {
-      text += tj[1].replace(/\\n/g, ' ').replace(/\\\\/g, '\\') + ' ';
-    }
-  }
-
-  if (text.length < 500) {
-    const rawMatches = str.matchAll(/\(([A-Za-z][A-Za-z\s,.'":;!?-]{10,})\)/g);
-    for (const m of rawMatches) text += m[1] + ' ';
-  }
-
-  return text.substring(0, 80000);
-}
-
-// ── Transcript fetch ──────────────────────────────────────────────────────────
-
-async function fetchTranscript(url: string): Promise<{ text: string } | null> {
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  };
-
-  try {
-    const res = await fetch(url, { headers });
-    if (!res.ok) return null;
-
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('pdf')) {
-      const buffer = await res.arrayBuffer();
-      const text = await extractPdfText(buffer);
-      if (text.length > 500) return { text };
-      return null;
-    }
-
-    const html = await res.text();
-    const text = cleanHtml(html);
-    if (text.length > 2000) return { text };
-    return null;
-  } catch {
-    return null;
-  }
-}
+// ── HTML → text ───────────────────────────────────────────────────────────────
 
 function cleanHtml(html: string): string {
   let text = html
@@ -159,198 +34,138 @@ function cleanHtml(html: string): string {
   return text.substring(0, 80000);
 }
 
-// ── Extraction ────────────────────────────────────────────────────────────────
+// ── PDF text extraction (base64 input) ───────────────────────────────────────
 
-const EXTRACT_PROMPT = (ticker: string, text: string) => `You are extracting NAND semiconductor cycle signals from an earnings call transcript.
-Company ticker: ${ticker}
+function extractPdfText(base64: string): string {
+  const binary = Buffer.from(base64, 'base64');
+  const str = binary.toString('latin1');
+  let text = '';
 
-Extract ONLY what is explicitly stated. If a value is not mentioned, return null.
-Return JSON only — no preamble, no markdown, no code block.
+  const btMatches = str.matchAll(/BT([\s\S]*?)ET/g);
+  for (const match of btMatches) {
+    const block = match[1];
+    const tjMatches = block.matchAll(/\(((?:[^()\\]|\\[\\()nrtbf])*)\)\s*T[jJ]/g);
+    for (const tj of tjMatches) {
+      text += tj[1].replace(/\\n/g, ' ').replace(/\\\\/g, '\\') + ' ';
+    }
+  }
 
-{
-  "transcript_quarter": <"Q1" | "Q2" | "Q3" | "Q4" | null>,
-  "transcript_year": <4-digit year number or null>,
-  "bit_growth_pct": <number or null>,
-  "capex_pct": <number or null>,
-  "asp_change_pct": <number or null>,
-  "inventory_days": <number or null>,
-  "mgmt_tone_score": <1-5 integer or null>,
-  "node_transition_note": <string one line or null>,
-  "bit_growth_quote": <exact quote or null>,
-  "capex_quote": <exact quote or null>,
-  "asp_quote": <exact quote or null>,
-  "inventory_quote": <exact quote or null>,
-  "mgmt_tone_quote": <exact quote or null>
+  if (text.length < 500) {
+    const rawMatches = str.matchAll(/\(([A-Za-z][A-Za-z\s,.'":;!?-]{10,})\)/g);
+    for (const m of rawMatches) text += m[1] + ' ';
+  }
+
+  return text.substring(0, 80000);
 }
 
-Fields:
-- transcript_quarter: which fiscal quarter is this call for (Q1, Q2, Q3, or Q4 as labelled in the transcript)
-- transcript_year: which calendar year is this call for (e.g. 2026)
-- bit_growth_pct: NAND bit shipment growth YoY %
-- capex_pct: CapEx change YoY % (for hyperscalers: total CapEx YoY %)
-- asp_change_pct: ASP change QoQ %
-- inventory_days: inventory days on hand
-- mgmt_tone_score: 1=very bearish, 5=very bullish
-- node_transition_note: one-line summary of any node/layer transition mentioned
+// ── URL fetch ─────────────────────────────────────────────────────────────────
 
-Transcript:
-${text.substring(0, 70000)}`;
-
-async function extractWithClaude(ticker: string, text: string): Promise<RawExtraction | null> {
+async function fetchUrl(url: string): Promise<string | null> {
   try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: EXTRACT_PROMPT(ticker, text) }],
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
     });
-    const raw = msg.content[0].type === 'text' ? msg.content[0].text : '';
-    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    return JSON.parse(cleaned) as RawExtraction;
-  } catch (e) {
-    console.error('Claude extraction error:', e);
+    if (!res.ok) return null;
+
+    const ct = res.headers.get('content-type') ?? '';
+    if (ct.includes('pdf')) {
+      const buf = await res.arrayBuffer();
+      const b64 = Buffer.from(buf).toString('base64');
+      const text = extractPdfText(b64);
+      return text.length > 500 ? text : null;
+    }
+
+    const html = await res.text();
+    const text = cleanHtml(html);
+    return text.length > 2000 ? text : null;
+  } catch {
     return null;
   }
 }
 
-async function extractWithOAI(ticker: string, text: string): Promise<RawExtraction | null> {
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: EXTRACT_PROMPT(ticker, text) }],
-        max_tokens: 1024,
-        response_format: { type: 'json_object' },
-      }),
-    });
-    if (!res.ok) throw new Error(`OpenAI ${res.status}`);
-    const data = await res.json();
-    return JSON.parse(data.choices[0].message.content) as RawExtraction;
-  } catch (e) {
-    console.error('OpenAI extraction error:', e);
-    return null;
-  }
-}
+// ── Quarter detection ─────────────────────────────────────────────────────────
 
-// Strip transcript_quarter/year before saving or returning to client
-function toExtractedData(raw: RawExtraction): ExtractedData {
-  return {
-    bit_growth_pct: raw.bit_growth_pct,
-    capex_pct: raw.capex_pct,
-    asp_change_pct: raw.asp_change_pct,
-    inventory_days: raw.inventory_days,
-    mgmt_tone_score: raw.mgmt_tone_score,
-    node_transition_note: raw.node_transition_note,
-    bit_growth_quote: raw.bit_growth_quote,
-    capex_quote: raw.capex_quote,
-    asp_quote: raw.asp_quote,
-    inventory_quote: raw.inventory_quote,
-    mgmt_tone_quote: raw.mgmt_tone_quote,
-  };
-}
-
-// Build "Q1 2026"-style string from raw extraction; returns null if malformed
-function buildExtractedQuarter(raw: RawExtraction | null): string | null {
-  if (!raw?.transcript_quarter || !raw?.transcript_year) return null;
-  const q = String(raw.transcript_quarter).toUpperCase().trim();
-  const y = String(raw.transcript_year).trim();
-  if (!/^Q[1-4]$/.test(q) || !/^\d{4}$/.test(y)) return null;
+function detectQuarter(text: string): string | null {
+  // Look for patterns like "Q1 fiscal 2026", "first quarter of fiscal 2026", etc.
+  const m =
+    text.match(/\b(Q[1-4])\s+(?:fiscal\s+)?(\d{4})\b/i) ||
+    text.match(/\b(?:first|second|third|fourth)\s+quarter.*?(\d{4})\b/i);
+  if (!m) return null;
+  const qMap: Record<string, string> = { first: 'Q1', second: 'Q2', third: 'Q3', fourth: 'Q4' };
+  const q = m[1] ? m[1].toUpperCase() : qMap[m[0].split(' ')[0].toLowerCase()];
+  const y = m[2] ?? m[1];
+  if (!q || !y || !/^\d{4}$/.test(y)) return null;
   return `${q} ${y}`;
 }
 
 function quartersMatch(a: string, b: string): boolean {
-  return a.toUpperCase().replace(/\s+/g, ' ').trim() === b.toUpperCase().replace(/\s+/g, ' ').trim();
+  return a.toUpperCase().trim() === b.toUpperCase().trim();
 }
 
-// ── Divergence detection ──────────────────────────────────────────────────────
+// ── Claude extraction ─────────────────────────────────────────────────────────
 
-const NUMERIC_FIELDS: (keyof ExtractedData)[] = ['bit_growth_pct', 'capex_pct', 'asp_change_pct', 'inventory_days'];
+function buildExtractionPrompt(ticker: string, company: string, quarter: string, type: string, rawText: string): string {
+  return `You are extracting structured data from a semiconductor earnings call transcript.
 
-function findDivergences(claude: ExtractedData, oai: ExtractedData): DivergentField[] {
-  const divergences: DivergentField[] = [];
+Company: ${company}
+Ticker: ${ticker}
+Quarter: ${quarter}
+Type: ${type} (vendor = NAND manufacturer, hyperscaler = cloud company)
 
-  for (const field of NUMERIC_FIELDS) {
-    const a = claude[field] as number | null;
-    const b = oai[field] as number | null;
-    if (a == null || b == null) continue;
-    const denom = Math.max(Math.abs(a), Math.abs(b));
-    if (denom > 0 && Math.abs(a - b) / denom > 0.05) {
-      const quoteField = (field.replace('_pct', '') + '_quote') as keyof ExtractedData;
-      divergences.push({
-        field,
-        claudeValue: a,
-        oaiValue: b,
-        claudeQuote: (claude[quoteField] as string | null) ?? null,
-        oaiQuote: (oai[quoteField] as string | null) ?? null,
-      });
-    }
-  }
+Extract the following fields. Return ONLY valid JSON, no other text.
 
-  const ct = claude.mgmt_tone_score;
-  const ot = oai.mgmt_tone_score;
-  if (ct != null && ot != null && Math.abs(ct - ot) > 1) {
-    divergences.push({
-      field: 'mgmt_tone_score',
-      claudeValue: ct,
-      oaiValue: ot,
-      claudeQuote: claude.mgmt_tone_quote ?? null,
-      oaiQuote: oai.mgmt_tone_quote ?? null,
-    });
-  }
+For ALL companies:
+- capex_pct: CapEx change year-over-year as a number (e.g. 28 for +28%, -10 for -10%). null if not mentioned.
+- mgmt_tone_score: Management tone 1-5 (1=very bearish, 3=neutral, 5=very bullish). Required.
+- capex_quote: The exact quote from the transcript supporting capex_pct. null if capex_pct is null.
+- mgmt_tone_quote: The exact quote supporting mgmt_tone_score. Required.
 
-  return divergences;
+For VENDOR companies only (MU, SNDK, SSNLF, HXSCL):
+- bit_growth_pct: NAND bit shipment growth YoY as a number. null if not mentioned.
+- asp_change_pct: Average selling price change YoY as a number. null if not mentioned.
+- inventory_days: Inventory days as a number. null if not mentioned.
+- node_transition_note: Brief note on node transition progress. null if not mentioned.
+- bit_growth_quote: Exact quote supporting bit_growth_pct.
+- asp_quote: Exact quote supporting asp_change_pct.
+- inventory_quote: Exact quote supporting inventory_days.
+
+For HYPERSCALER companies only (MSFT, GOOG, AMZN, META):
+- bit_growth_pct: null
+- asp_change_pct: null
+- inventory_days: null
+- node_transition_note: null
+- bit_growth_quote: null
+- asp_quote: null
+- inventory_quote: null
+- extraction_notes: Any notable commentary about AI infrastructure, storage demand, or data center spend.
+
+Transcript:
+${rawText.slice(0, 80000)}
+
+Return JSON only. No markdown, no explanation.`;
 }
 
-// ── Write to signals tab ──────────────────────────────────────────────────────
-
-async function saveSignalRow(
-  sheets: ReturnType<typeof getSheets>,
+async function extractWithClaude(
   ticker: string,
+  company: string,
   quarter: string,
-  extracted: ExtractedData,
-  transcriptUrl: string,
-  runId: string,
-) {
-  const meta = COMPANY_META[ticker];
-  const row: Record<string, string> = {
-    run_id: runId,
-    quarter,
-    ingested_at: new Date().toISOString().split('T')[0],
-    company: meta?.name ?? ticker,
-    ticker,
-    type: meta?.type ?? 'vendor',
-    bit_growth_pct: extracted.bit_growth_pct != null ? String(extracted.bit_growth_pct) : '',
-    capex_pct: extracted.capex_pct != null ? String(extracted.capex_pct) : '',
-    asp_change_pct: extracted.asp_change_pct != null ? String(extracted.asp_change_pct) : '',
-    inventory_days: extracted.inventory_days != null ? String(extracted.inventory_days) : '',
-    mgmt_tone_score: extracted.mgmt_tone_score != null ? String(extracted.mgmt_tone_score) : '',
-    node_transition_note: extracted.node_transition_note ?? '',
-    bit_growth_quote: extracted.bit_growth_quote ?? '',
-    capex_quote: extracted.capex_quote ?? '',
-    asp_quote: extracted.asp_quote ?? '',
-    inventory_quote: extracted.inventory_quote ?? '',
-    mgmt_tone_quote: extracted.mgmt_tone_quote ?? '',
-    transcript_url: transcriptUrl,
-  };
-
-  const headerRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: 'signals!1:1',
-  });
-  const headers: string[] = headerRes.data.values?.[0] || [];
-  const rowData = headers.map(h => row[h] ?? '');
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: 'signals!A:A',
-    valueInputOption: 'RAW',
-    requestBody: { values: [rowData] },
-  });
+  type: string,
+  rawText: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: buildExtractionPrompt(ticker, company, quarter, type, rawText) }],
+    });
+    const raw = msg.content[0].type === 'text' ? msg.content[0].text : '';
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error('Claude extraction error:', e);
+    return null;
+  }
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -358,158 +173,117 @@ async function saveSignalRow(
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const { ticker, quarter, sourceType, rawText, pdfBase64, url } = body as {
+      ticker: string;
+      quarter: string;
+      sourceType: 'paste' | 'pdf' | 'url';
+      rawText?: string;
+      pdfBase64?: string;
+      url?: string;
+    };
 
-    // Resolve action — save after user picks divergent values
-    if (body.action === 'resolve') {
-      const { ticker, quarter, fields, transcriptUrl } = body;
-      if (!ticker || !quarter || !fields) {
-        return NextResponse.json({ error: 'ticker, quarter, fields required' }, { status: 400 });
-      }
-      const sheets = getSheets();
-      const runId = `run_${Date.now()}`;
-      await saveSignalRow(sheets, ticker, quarter, fields as ExtractedData, transcriptUrl ?? '', runId);
-      return NextResponse.json({ status: 'ingested', ticker, quarter });
-    }
-
-    // Force-save action — user confirmed quarter mismatch, run divergence check and save
-    if (body.action === 'force-save') {
-      const { ticker, quarter, claudeData, oaiData, transcriptUrl } = body;
-      if (!ticker || !quarter || !transcriptUrl) {
-        return NextResponse.json({ error: 'ticker, quarter, transcriptUrl required' }, { status: 400 });
-      }
-      if (!claudeData && !oaiData) {
-        return NextResponse.json({ error: 'No extraction data provided' }, { status: 400 });
-      }
-      const sheets = getSheets();
-      const runId = `run_${Date.now()}`;
-
-      if (!claudeData || !oaiData) {
-        const extracted = (claudeData ?? oaiData) as ExtractedData;
-        await saveSignalRow(sheets, ticker, quarter, extracted, transcriptUrl, runId);
-        return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl });
-      }
-
-      const divergentFields = findDivergences(claudeData as ExtractedData, oaiData as ExtractedData);
-      if (divergentFields.length === 0) {
-        await saveSignalRow(sheets, ticker, quarter, claudeData as ExtractedData, transcriptUrl, runId);
-        return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl });
-      }
-      return NextResponse.json({ status: 'review', ticker, quarter, transcriptUrl, divergentFields, claudeData, oaiData });
-    }
-
-    // Main ingest
-    const { ticker, quarter, urlOverride, pasteText } = body;
-    if (!ticker || !quarter) {
-      return NextResponse.json({ error: 'ticker and quarter required' }, { status: 400 });
-    }
-
-    // Production (Vercel) blocks auto-fetch, but always honour an explicit urlOverride or pasteText
-    if (process.env.NODE_ENV === 'production' && !urlOverride && !pasteText) {
-      return NextResponse.json({
-        status: 'needs-url',
-        ticker,
-        quarter,
-        defaultUrl: '',
-        productionBlock: true,
-        message: 'Ingest must be run locally — run scripts/start-ingest.sh',
-      });
+    if (!ticker || !quarter || !sourceType) {
+      return NextResponse.json({ error: 'ticker, quarter, sourceType required' }, { status: 400 });
     }
 
     const meta = COMPANY_META[ticker];
-    if (!meta) return NextResponse.json({ error: `Unknown ticker: ${ticker}` }, { status: 400 });
-
-    const sheets = getSheets();
-
-    // Get default_url from config
-    let defaultUrl = '';
-    try {
-      const cfgRes = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'config!A:F' });
-      const config = parseTab(cfgRes.data.values || []);
-      const row = config.find(r => r.ticker === ticker);
-      defaultUrl = row?.default_url ?? '';
-    } catch {
-      // continue without defaultUrl
+    if (!meta) {
+      return NextResponse.json({ error: `Unknown ticker: ${ticker}` }, { status: 400 });
     }
 
-    // Determine fetch URL
-    let fetchUrl = urlOverride || '';
-    if (!fetchUrl) {
-      if (ticker === 'SSNLF') {
-        fetchUrl = samsungPdfUrl(quarter) ?? defaultUrl;
-      } else {
-        fetchUrl = defaultUrl;
-      }
+    // 1. Get raw text based on sourceType
+    let text: string | null = null;
+    let sourceUrl: string | null = url ?? null;
+
+    if (sourceType === 'paste') {
+      text = rawText?.trim() ?? null;
+    } else if (sourceType === 'pdf') {
+      if (!pdfBase64) return NextResponse.json({ error: 'pdfBase64 required for pdf source' }, { status: 400 });
+      text = extractPdfText(pdfBase64);
+      if (text.length < 200) return NextResponse.json({ error: 'PDF text extraction yielded too little text' }, { status: 422 });
+    } else if (sourceType === 'url') {
+      if (!url) return NextResponse.json({ error: 'url required for url source' }, { status: 400 });
+      text = await fetchUrl(url);
+      if (!text) return NextResponse.json({ error: `Failed to fetch transcript from URL: ${url}` }, { status: 422 });
     }
 
-    // Fetch transcript (or use pasted text directly)
-    const pastedClean = pasteText?.trim();
-
-    if (!fetchUrl && !pastedClean) {
-      return NextResponse.json({ status: 'needs-url', ticker, quarter, defaultUrl }, { status: 200 });
+    if (!text) {
+      return NextResponse.json({ error: 'No text content could be obtained' }, { status: 422 });
     }
 
-    const fetched = pastedClean
-      ? { text: pastedClean.substring(0, 80000) }
-      : await fetchTranscript(fetchUrl);
-    if (!fetched) {
-      return NextResponse.json({ status: 'needs-url', ticker, quarter, defaultUrl }, { status: 200 });
-    }
-    // When paste is used, never let fetchUrl (config default) bleed into the saved URL
-    const transcriptRef = pastedClean ? (urlOverride || 'pasted') : fetchUrl;
-
-    // Dual extraction — Claude + OpenAI in parallel
-    const [claudeRaw, oaiRaw] = await Promise.all([
-      extractWithClaude(ticker, fetched.text),
-      extractWithOAI(ticker, fetched.text),
-    ]);
-
-    if (!claudeRaw && !oaiRaw) {
-      return NextResponse.json({ error: 'Both extractions failed', ticker }, { status: 500 });
-    }
-
-    // Quarter mismatch check — use Claude's result first, OAI as fallback
-    const extractedQuarter = buildExtractedQuarter(claudeRaw) ?? buildExtractedQuarter(oaiRaw);
-    if (extractedQuarter && !quartersMatch(extractedQuarter, quarter)) {
+    // Quarter mismatch check (best-effort, non-blocking)
+    const detectedQuarter = detectQuarter(text);
+    if (detectedQuarter && !quartersMatch(detectedQuarter, quarter)) {
       return NextResponse.json({
         status: 'quarter-mismatch',
-        extractedQuarter,
+        extractedQuarter: detectedQuarter,
         selectedQuarter: quarter,
-        transcriptUrl: transcriptRef,
-        claudeData: claudeRaw ? toExtractedData(claudeRaw) : null,
-        oaiData: oaiRaw ? toExtractedData(oaiRaw) : null,
       });
     }
 
-    const claudeResult = claudeRaw ? toExtractedData(claudeRaw) : null;
-    const oaiResult = oaiRaw ? toExtractedData(oaiRaw) : null;
-
-    // If only one extraction succeeded, save directly
-    if (!claudeResult || !oaiResult) {
-      const extracted = claudeResult ?? oaiResult!;
-      const runId = `run_${Date.now()}`;
-      await saveSignalRow(sheets, ticker, quarter, extracted, transcriptRef, runId);
-      return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl: fetchUrl, extracted });
-    }
-
-    // Divergence check
-    const divergentFields = findDivergences(claudeResult, oaiResult);
-
-    if (divergentFields.length === 0) {
-      const runId = `run_${Date.now()}`;
-      await saveSignalRow(sheets, ticker, quarter, claudeResult, transcriptRef, runId);
-      return NextResponse.json({ status: 'ingested', ticker, quarter, transcriptUrl: fetchUrl, extracted: claudeResult });
-    }
-
-    // Divergence — return for review without saving
-    return NextResponse.json({
-      status: 'review',
+    // 2. Store transcript (upsert — overwrites if re-ingesting)
+    const { error: transcriptErr } = await supabase.from('transcripts').upsert({
       ticker,
       quarter,
-      transcriptUrl: fetchUrl,
-      divergentFields,
-      claudeData: claudeResult,
-      oaiData: oaiResult,
-    });
+      source_type: sourceType,
+      source_url: sourceUrl,
+      raw_text: text,
+    }, { onConflict: 'ticker,quarter' });
+
+    if (transcriptErr) {
+      return NextResponse.json({ error: `Failed to store transcript: ${transcriptErr.message}` }, { status: 500 });
+    }
+
+    // 3. Extract signals with Claude
+    const extracted = await extractWithClaude(ticker, meta.name, quarter, meta.type, text);
+
+    let signalsRow: Record<string, unknown>;
+    if (!extracted) {
+      signalsRow = {
+        ticker, quarter,
+        company: meta.name, type: meta.type,
+        extraction_notes: 'ERROR: Claude extraction failed',
+        bit_growth_pct: null, capex_pct: null, asp_change_pct: null,
+        inventory_days: null, mgmt_tone_score: null, node_transition_note: null,
+        bit_growth_quote: null, capex_quote: null, asp_quote: null,
+        inventory_quote: null, mgmt_tone_quote: null,
+      };
+    } else {
+      let notes = (extracted.extraction_notes as string | null) ?? null;
+      // Validate JSON parsed correctly
+      if (typeof extracted !== 'object') {
+        notes = 'ERROR: JSON parse failed';
+      }
+      signalsRow = {
+        ticker, quarter,
+        company: meta.name, type: meta.type,
+        bit_growth_pct: extracted.bit_growth_pct ?? null,
+        capex_pct: extracted.capex_pct ?? null,
+        asp_change_pct: extracted.asp_change_pct ?? null,
+        inventory_days: extracted.inventory_days ?? null,
+        mgmt_tone_score: extracted.mgmt_tone_score ?? null,
+        node_transition_note: extracted.node_transition_note ?? null,
+        bit_growth_quote: extracted.bit_growth_quote ?? null,
+        capex_quote: extracted.capex_quote ?? null,
+        asp_quote: extracted.asp_quote ?? null,
+        inventory_quote: extracted.inventory_quote ?? null,
+        mgmt_tone_quote: extracted.mgmt_tone_quote ?? null,
+        extraction_notes: notes,
+      };
+    }
+
+    // 4. Store signals
+    const { error: signalsErr } = await supabase.from('signals').upsert(signalsRow, { onConflict: 'ticker,quarter' });
+
+    if (signalsErr) {
+      return NextResponse.json({
+        status: 'partial',
+        message: `Transcript stored but signals write failed: ${signalsErr.message}`,
+        ticker, quarter,
+      }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, ticker, quarter });
 
   } catch (error) {
     console.error('Ingest error:', error);
