@@ -155,13 +155,14 @@ async function extractWithClaude(
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { ticker, quarter, sourceType, rawText, pdfBase64, url } = body as {
+    const { ticker, quarter, sourceType, rawText, pdfBase64, url, force } = body as {
       ticker: string;
       quarter: string;
       sourceType: 'paste' | 'pdf' | 'url';
       rawText?: string;
       pdfBase64?: string;
       url?: string;
+      force?: boolean;
     };
 
     if (!ticker || !quarter || !sourceType) {
@@ -171,6 +172,20 @@ export async function POST(req: NextRequest) {
     const meta = COMPANY_META[ticker];
     if (!meta) {
       return NextResponse.json({ error: `Unknown ticker: ${ticker}` }, { status: 400 });
+    }
+
+    // 0. Idempotency check — skip if transcript + valid signals already exist (unless force=true)
+    if (!force) {
+      const [{ data: existingTranscript }, { data: existingSignal }] = await Promise.all([
+        supabase.from('transcripts').select('ticker').eq('ticker', ticker).eq('quarter', quarter).maybeSingle(),
+        supabase.from('signals').select('extraction_notes').eq('ticker', ticker).eq('quarter', quarter).maybeSingle(),
+      ]);
+      const hasTranscript = !!existingTranscript;
+      const sig = existingSignal as { extraction_notes?: string | null } | null;
+      const hasValidSignals = !!sig && !sig.extraction_notes?.includes('ERROR');
+      if (hasTranscript && hasValidSignals) {
+        return NextResponse.json({ skipped: true, ticker, quarter, message: 'Data is current in DB — pass force:true to re-extract' });
+      }
     }
 
     // 1. Get raw text based on sourceType
@@ -209,11 +224,13 @@ export async function POST(req: NextRequest) {
     // 3. Extract signals with Claude
     const extracted = await extractWithClaude(ticker, meta.name, quarter, meta.type, text);
 
+    const now = new Date().toISOString();
     let signalsRow: Record<string, unknown>;
     if (!extracted) {
       signalsRow = {
         ticker, quarter,
         company: meta.name, type: meta.type,
+        extracted_at: now,
         extraction_notes: 'ERROR: Claude extraction failed',
         bit_growth_pct: null, capex_pct: null, asp_change_pct: null,
         inventory_days: null, mgmt_tone_score: null, node_transition_note: null,
@@ -222,13 +239,13 @@ export async function POST(req: NextRequest) {
       };
     } else {
       let notes = (extracted.extraction_notes as string | null) ?? null;
-      // Validate JSON parsed correctly
       if (typeof extracted !== 'object') {
         notes = 'ERROR: JSON parse failed';
       }
       signalsRow = {
         ticker, quarter,
         company: meta.name, type: meta.type,
+        extracted_at: now,
         bit_growth_pct: extracted.bit_growth_pct ?? null,
         capex_pct: extracted.capex_pct ?? null,
         asp_change_pct: extracted.asp_change_pct ?? null,
