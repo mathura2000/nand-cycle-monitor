@@ -12,7 +12,7 @@ interface SignalRow {
   run_id: string; quarter: string; ingested_at: string;
   company: string; ticker: string; type: string;
   bit_growth_pct: string; capex_pct: string; asp_change_pct: string;
-  inventory_days: string; mgmt_tone_score: string; node_transition_note: string;
+  inventory_days: string; mgmt_tone_score: string; node_transition_score: string; node_transition_note: string;
   bit_growth_quote: string; capex_quote: string; asp_quote: string;
   inventory_quote: string; mgmt_tone_quote: string; transcript_url: string;
 }
@@ -32,7 +32,7 @@ interface ApiData {
 
 const SUPPLY_SIGNALS = [
   { key: 'capex',     label: 'CapEx trending',    field: 'capex_pct',         quoteField: 'capex_quote',         valFmt: (v: number) => `+${v.toFixed(0)}% YoY` },
-  { key: 'node',      label: 'Node transitions',  field: 'node_transition_note', quoteField: 'node_transition_note', valFmt: (_: number) => 'see notes' },
+  { key: 'node',      label: 'Node transitions',  field: 'node_transition_score', quoteField: 'node_transition_note', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
   { key: 'inventory', label: 'Inventory days',    field: 'inventory_days',    quoteField: 'inventory_quote',     valFmt: (v: number) => `${v.toFixed(0)} days` },
   { key: 'tone',      label: 'Mgmt tone',         field: 'mgmt_tone_score',   quoteField: 'mgmt_tone_quote',     valFmt: (v: number) => `${v.toFixed(1)} / 5` },
   { key: 'asp',       label: 'ASP trajectory',    field: 'asp_change_pct',    quoteField: 'asp_quote',           valFmt: (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}% QoQ` },
@@ -45,6 +45,12 @@ const DEMAND_SIGNALS = [
 ] as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
+function quarterIndex(q: string): number {
+  const idx = QUARTER_ORDER.indexOf(q);
+  return idx >= 0 ? idx : 999;
+}
 
 function num(s: string): number { return parseFloat(s) || 0; }
 
@@ -83,9 +89,12 @@ function badge(val: number, field: string, isSupply: boolean): { text: string; i
     if (val >= 0) return { text: '→ holding', isAlert: false };
     return { text: '↓ softening', isAlert: true };
   }
-  if (field === 'node_transition_note') {
-    const hasNote = val > 0;
-    return hasNote ? { text: '↑ active', isAlert: true } : { text: '→ stable', isAlert: false };
+  if (field === 'node_transition_score') {
+    if (val >= 4.5) return { text: '↑↑ aggressive', isAlert: true };
+    if (val >= 4)   return { text: '↑ active ramp', isAlert: true };
+    if (val >= 3)   return { text: '→ moderate', isAlert: false };
+    if (val >= 2)   return { text: '↓ managed', isAlert: false };
+    return          { text: '↓↓ cutting', isAlert: false };
   }
   return { text: '→', isAlert: false };
 }
@@ -132,7 +141,7 @@ function EvidenceRow({
   transcriptUrl: string;
 }) {
   const rawVal = row[field as keyof SignalRow] as string;
-  const val = field === 'node_transition_note' ? (rawVal ? 1 : 0) : num(rawVal);
+  const val = num(rawVal);
   const { text: badgeText, isAlert } = badge(val, field, isSupply);
   const quote = row[quoteField as keyof SignalRow] as string;
 
@@ -142,9 +151,7 @@ function EvidenceRow({
     ? (isAlert ? '#c9a84c' : '#3a3528')
     : (isAlert ? '#c9a84c' : '#4a7fa5');
 
-  const displayVal = field === 'node_transition_note'
-    ? (rawVal || '—')
-    : valFmt(val);
+  const displayVal = valFmt(val);
 
   return (
     <div style={{ padding: '11px 0', borderBottom: '0.5px solid #1a1812' }}>
@@ -248,7 +255,7 @@ export default function SignalsPage({
     if (row.ticker && row.transcript_url) urlByTicker[row.ticker] = row.transcript_url;
   }
 
-  const quarters = [...new Set(signals.map(r => r.quarter))].sort();
+  const quarters = [...new Set(signals.map(r => r.quarter))].sort((a, b) => quarterIndex(a) - quarterIndex(b));
   const latestQ = quarters.at(-1) ?? '';
   const latestRows = signals.filter(r => r.quarter === latestQ);
 
@@ -291,11 +298,6 @@ export default function SignalsPage({
     .filter(r => r.type === typeFilter)
     .sort((a, b) => {
       const field = activeSigDef.field as keyof SignalRow;
-      if (field === 'node_transition_note') {
-        const aV = (a[field] as string)?.trim() ? 1 : 0;
-        const bV = (b[field] as string)?.trim() ? 1 : 0;
-        return bV - aV;
-      }
       return num(b[field] as string) - num(a[field] as string);
     });
 
@@ -308,9 +310,6 @@ export default function SignalsPage({
     const rows = latestRows.filter(r => r.type === typeFilter);
     if (rows.length === 0) return '—';
     const field = def.field as keyof SignalRow;
-    if (field === 'node_transition_note') {
-      return rows.some(r => (r[field] as string)?.trim()) ? '↑ active' : '→ stable';
-    }
     const avg = rows.reduce((s, r) => s + num(r[field] as string), 0) / rows.length;
     const { text } = badge(avg, field, isSupply);
     return text;
@@ -344,8 +343,8 @@ export default function SignalsPage({
 
   const tabBase: React.CSSProperties = {
     fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
-    padding: '5px 14px', borderRadius: 4, border: '0.5px solid #1e1c18',
-    background: 'transparent', color: '#3a3528', cursor: 'pointer',
+    padding: '5px 14px', borderRadius: 4, border: '0.5px solid #2a2820',
+    background: 'transparent', color: '#6a6050', cursor: 'pointer',
   };
   const tabActive = (tab: 'supply' | 'demand'): React.CSSProperties => ({
     ...tabBase,
@@ -367,7 +366,7 @@ export default function SignalsPage({
       <a
         href="/"
         style={{
-          fontSize: 10, color: '#3a3528', letterSpacing: '0.08em',
+          fontSize: 10, color: '#6a6050', letterSpacing: '0.08em',
           textTransform: 'uppercase', marginBottom: 14, display: 'block',
           textDecoration: 'none',
         }}
@@ -396,7 +395,7 @@ export default function SignalsPage({
         background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10,
         padding: '18px 20px 12px', marginBottom: 12,
       }}>
-        <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 4 }}>
+        <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 4 }}>
           {chartLabel} · {quarters.length > 0 ? `${quarters.length} quarter${quarters.length !== 1 ? 's' : ''}` : 'no data'}
         </div>
         <div style={{ fontSize: 13, fontWeight: 500, color: '#d4c090', marginBottom: 12 }}>
@@ -413,13 +412,13 @@ export default function SignalsPage({
               <CartesianGrid stroke="#1a1812" strokeDasharray="2 5" vertical={false} />
               <XAxis
                 dataKey="quarter"
-                tick={{ fill: '#2a2820', fontSize: 8, fontFamily: 'var(--font-sans)' }}
-                axisLine={{ stroke: '#1e1c18' }}
+                tick={{ fill: '#6a6050', fontSize: 8, fontFamily: 'var(--font-sans)' }}
+                axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fill: '#2a2820', fontSize: 8, fontFamily: 'var(--font-sans)' }}
-                axisLine={{ stroke: '#1e1c18' }}
+                tick={{ fill: '#6a6050', fontSize: 8, fontFamily: 'var(--font-sans)' }}
+                axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
                 width={32}
@@ -453,7 +452,7 @@ export default function SignalsPage({
 
         {/* Signal list */}
         <div style={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: 16 }}>
-          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
+          <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
             Signals — click to view evidence
           </div>
           {signalDefs.map(sig => {
@@ -483,7 +482,7 @@ export default function SignalsPage({
 
         {/* Evidence panel */}
         <div style={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '16px 18px' }}>
-          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>
+          <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>
             {activeSigDef.label} — strongest first
           </div>
 

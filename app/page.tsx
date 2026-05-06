@@ -21,9 +21,17 @@ interface ApiData {
   signals: SignalRow[];
   latestQuarter: string;
   sourcesCount: number;
+  supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>;
+  demandByQuarter: Record<string, number | null>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
+function quarterIndex(q: string): number {
+  const idx = QUARTER_ORDER.indexOf(q);
+  return idx >= 0 ? idx : 999;
+}
 
 function num(s: string): number { return parseFloat(s) || 0; }
 
@@ -116,14 +124,14 @@ function Spark({ values, color }: { values: number[]; color: string }) {
 
 // ── Gap bar ────────────────────────────────────────────────────────────────
 
-function GapBar({ vendors, hyperscalers }: { vendors: SignalRow[]; hyperscalers: SignalRow[] }) {
-  const supplyGrowth = avg(vendors, 'bit_growth_pct');
-  const demandGrowth = avg(hyperscalers, 'capex_pct');
+function GapBar({ leadingSupply, demand }: { leadingSupply: number | null; demand: number | null }) {
+  const supplyGrowth = leadingSupply ?? 0;
+  const demandGrowth = demand ?? 0;
   const gapDiff = demandGrowth - supplyGrowth; // positive = demand outpacing = safer
   const position = Math.max(5, Math.min(95, 50 + gapDiff * 1.5));
 
   let statusText = 'No data';
-  if (vendors.length > 0) {
+  if (leadingSupply !== null) {
     if (gapDiff > 5) statusText = 'Demand absorbing supply · safe';
     else if (gapDiff > -5) statusText = 'Balanced · monitor';
     else if (gapDiff > -15) statusText = 'Stable · watch supply';
@@ -136,8 +144,8 @@ function GapBar({ vendors, hyperscalers }: { vendors: SignalRow[]; hyperscalers:
       padding: '12px 22px', marginBottom: 10,
       display: 'flex', alignItems: 'center', gap: 14,
     },
-    label: { fontSize: 9, color: '#2e2c24', letterSpacing: '0.07em', textTransform: 'uppercase', width: 85, lineHeight: 1.5 } as React.CSSProperties,
-    track: { flex: 1, height: 3, background: '#1a1812', borderRadius: 2, position: 'relative' } as React.CSSProperties,
+    label: { fontSize: 9, color: '#6a6050', letterSpacing: '0.07em', textTransform: 'uppercase', width: 85, lineHeight: 1.5 } as React.CSSProperties,
+    track: { flex: 1, height: 3, background: '#252318', borderRadius: 2, position: 'relative' } as React.CSSProperties,
     fill: { height: '100%', borderRadius: 2, width: `${position}%`, background: '#c9a84c', opacity: 0.4 } as React.CSSProperties,
     marker: { position: 'absolute', left: `${position}%`, top: -5, width: 1.5, height: 13, background: '#c9a84c', borderRadius: 1 } as React.CSSProperties,
     status: { fontSize: 11, color: '#c9a84c', fontWeight: 500, whiteSpace: 'nowrap' } as React.CSSProperties,
@@ -168,7 +176,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0 }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {} }));
   }, []);
 
   if (!data) {
@@ -191,21 +199,27 @@ export default function OverviewPage() {
   }
 
   // ── Partition data ───────────────────────────────────────────────────────
-  const quarters = [...new Set(signals.map(r => r.quarter))].sort();
+  const quarters = [...new Set(signals.map(r => r.quarter))].sort((a, b) => quarterIndex(a) - quarterIndex(b));
   const latestQ = quarters.at(-1)!;
   const latestRows = signals.filter(r => r.quarter === latestQ);
   const vendors = latestRows.filter(r => r.type === 'vendor');
   const hyperscalers = latestRows.filter(r => r.type === 'hyperscaler');
 
   // ── Hero chart data ──────────────────────────────────────────────────────
-  const chartData = quarters.map(q => {
-    const qRows = signals.filter(r => r.quarter === q);
-    const qVendors = qRows.filter(r => r.type === 'vendor');
-    const qHypers = qRows.filter(r => r.type === 'hyperscaler');
-    const supply = qVendors.length ? avg(qVendors, 'bit_growth_pct') : undefined;
-    const demand = qHypers.length ? avg(qHypers, 'capex_pct') : undefined;
-    return { quarter: q, supply, demand };
-  });
+  const allChartQuarters = [...new Set([
+    ...Object.keys(data.supplyByQuarter),
+    ...Object.keys(data.demandByQuarter),
+  ])].sort((a, b) => quarterIndex(a) - quarterIndex(b));
+
+  const chartData = allChartQuarters.map(q => ({
+    quarter: q,
+    leadingSupply: data.supplyByQuarter[q]?.leading ?? null,
+    trailingSupply: data.supplyByQuarter[q]?.trailing ?? null,
+    demand: data.demandByQuarter[q] ?? null,
+  }));
+
+  const latestLeadingSupply = data.supplyByQuarter[latestQ]?.leading ?? null;
+  const latestDemand = data.demandByQuarter[latestQ] ?? null;
 
   // ── Sparkline series (per-quarter averages) ──────────────────────────────
   const qVendors = (q: string) => signals.filter(r => r.quarter === q && r.type === 'vendor');
@@ -275,12 +289,16 @@ export default function OverviewPage() {
         <div style={S.chartLabel as React.CSSProperties}>Primary signal</div>
         <div style={S.chartTitle as React.CSSProperties}>Supply vs Demand Growth</div>
         <div style={S.chartSub as React.CSSProperties}>
-          Aggregate NAND bit supply growth vs hyperscaler CapEx YoY · {quarters.length} quarter{quarters.length !== 1 ? 's' : ''}
+          Leading supply (node transitions + vendor capex) vs hyperscaler CapEx YoY · {quarters.length} quarter{quarters.length !== 1 ? 's' : ''}
         </div>
         <div style={S.legend as React.CSSProperties}>
           <div style={S.legItem as React.CSSProperties}>
-            <div style={{ ...S.legDot, background: '#c9a84c' }} />
-            Supply (bit growth %)
+            <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="2" /></svg>
+            Leading supply (node + capex)
+          </div>
+          <div style={S.legItem as React.CSSProperties}>
+            <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="1.5" strokeDasharray="5 4" strokeOpacity="0.6" /></svg>
+            Trailing supply (bit growth)
           </div>
           <div style={S.legItem as React.CSSProperties}>
             <div style={{ ...S.legDot, background: '#4a7fa5' }} />
@@ -294,13 +312,13 @@ export default function OverviewPage() {
               <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 dataKey="quarter"
-                tick={{ fill: '#2a2820', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-                axisLine={{ stroke: '#1e1c18' }}
+                tick={{ fill: '#6a6050', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fill: '#2a2820', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-                axisLine={{ stroke: '#1e1c18' }}
+                tick={{ fill: '#6a6050', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
                 width={36}
@@ -308,15 +326,26 @@ export default function OverviewPage() {
               <Tooltip
                 contentStyle={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 6, fontSize: 11 }}
                 labelStyle={{ color: '#7a6e54' }}
-                formatter={(v: unknown, name: unknown) => [`${Number(v).toFixed(1)}%`, name === 'supply' ? 'Supply' : 'Demand']}
+                formatter={(v: unknown, name: unknown) => {
+                  const labels: Record<string, string> = { leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply', demand: 'Demand' };
+                  return [`${Number(v).toFixed(1)}%`, labels[name as string] ?? String(name)];
+                }}
               />
               <Line
-                dataKey="supply" stroke="#c9a84c" strokeWidth={2.5}
+                dataKey="leadingSupply" name="leadingSupply"
+                stroke="#c9a84c" strokeWidth={2}
                 dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
                 connectNulls
               />
               <Line
-                dataKey="demand" stroke="#4a7fa5" strokeWidth={2.5}
+                dataKey="trailingSupply" name="trailingSupply"
+                stroke="#c9a84c" strokeWidth={1.5} strokeDasharray="5 4" strokeOpacity={0.6}
+                dot={false} activeDot={{ r: 3, fill: '#c9a84c' }}
+                connectNulls
+              />
+              <Line
+                dataKey="demand" name="demand"
+                stroke="#4a7fa5" strokeWidth={2}
                 dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                 connectNulls
               />
@@ -328,7 +357,7 @@ export default function OverviewPage() {
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
-      <GapBar vendors={vendors} hyperscalers={hyperscalers} />
+      <GapBar leadingSupply={latestLeadingSupply} demand={latestDemand} />
 
       {/* ── Signal panels ───────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>

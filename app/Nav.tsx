@@ -47,7 +47,7 @@ export default function Nav() {
     fontSize: 10,
     letterSpacing: '0.1em',
     textTransform: 'uppercase',
-    color: pathname === href ? '#c9a84c' : '#3a3528',
+    color: pathname === href ? '#c9a84c' : '#6a6050',
     textDecoration: 'none',
   });
 
@@ -65,7 +65,7 @@ export default function Nav() {
           NAND · CM
           <span style={{
             fontSize: 9,
-            color: '#3a3528',
+            color: '#6a6050',
             letterSpacing: '0.14em',
             textTransform: 'uppercase',
             marginLeft: 10,
@@ -81,7 +81,7 @@ export default function Nav() {
       <Link href="/ingest" style={linkStyle('/ingest')}>Ingest</Link>
 
       {/* Run metadata */}
-      <div style={{ marginLeft: 'auto', fontSize: 10, color: '#2e2c24' }}>
+      <div style={{ marginLeft: 'auto', fontSize: 10, color: '#6a6050' }}>
         {meta ? (
           <>
             {meta.latestQuarter} · {meta.sourcesCount} / {meta.totalSources} sources
