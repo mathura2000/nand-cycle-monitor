@@ -44,6 +44,84 @@ function parseTab(rows: string[][]): Record<string, string>[] {
   });
 }
 
+// ── Composite signal computation ───────────────────────────────────────────
+
+const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
+
+function quarterIndex(q: string): number {
+  const idx = QUARTER_ORDER.indexOf(q);
+  return idx >= 0 ? idx : 999;
+}
+
+// node score (1-5) → equivalent % via breakpoint interpolation
+// 1=-20, 2=-5, 3=0, 4=15, 5=35
+function nodeScoreToPercent(score: number): number {
+  const map: Record<number, number> = { 1: -20, 2: -5, 3: 0, 4: 15, 5: 35 };
+  const lo = Math.floor(score);
+  const hi = Math.ceil(score);
+  if (lo === hi) return map[lo] ?? 0;
+  return (map[lo] ?? 0) + ((map[hi] ?? 0) - (map[lo] ?? 0)) * (score - lo);
+}
+
+function winsorize(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
+
+type SigRow = Record<string, unknown> & { quarter?: string; extracted_at?: string };
+
+// Leading = 80% node_transition_score (normalized to %) + 20% vendor capex_pct
+// Trailing = avg bit_growth_pct across vendors
+function computeSupplyByQuarter(signals: SigRow[]): Record<string, { leading: number | null; trailing: number | null }> {
+  const vendors = signals.filter(r => r.type === 'vendor');
+  const quarters = [...new Set(vendors.map(r => r.quarter as string))];
+  const result: Record<string, { leading: number | null; trailing: number | null }> = {};
+
+  for (const q of quarters) {
+    const qRows = vendors.filter(r => r.quarter === q);
+    const nodeRows = qRows.filter(r => r.node_transition_score != null && r.node_transition_score !== '');
+    const capexRows = qRows.filter(r => r.capex_pct != null && r.capex_pct !== '');
+    const bitRows = qRows.filter(r => r.bit_growth_pct != null && r.bit_growth_pct !== '');
+
+    let leading: number | null = null;
+    if (nodeRows.length > 0) {
+      const avgNode = nodeRows.reduce((s, r) => s + Number(r.node_transition_score), 0) / nodeRows.length;
+      const nodePct = nodeScoreToPercent(avgNode);
+      let capexContrib = 0;
+      if (capexRows.length > 0) {
+        const avgCapex = capexRows.reduce((s, r) => s + Number(r.capex_pct), 0) / capexRows.length;
+        capexContrib = winsorize(avgCapex, -60, 60);
+      }
+      leading = Math.round((nodePct * 0.8 + capexContrib * 0.2) * 10) / 10;
+    }
+
+    let trailing: number | null = null;
+    if (bitRows.length > 0) {
+      trailing = Math.round(
+        (bitRows.reduce((s, r) => s + Number(r.bit_growth_pct), 0) / bitRows.length) * 10
+      ) / 10;
+    }
+
+    result[q] = { leading, trailing };
+  }
+
+  return result;
+}
+
+function computeDemandByQuarter(signals: SigRow[]): Record<string, number | null> {
+  const hyperscalers = signals.filter(r => r.type === 'hyperscaler');
+  const quarters = [...new Set(hyperscalers.map(r => r.quarter as string))];
+  const result: Record<string, number | null> = {};
+
+  for (const q of quarters) {
+    const qRows = hyperscalers.filter(r => r.quarter === q && r.capex_pct != null && r.capex_pct !== '');
+    if (qRows.length === 0) { result[q] = null; continue; }
+    const avg = qRows.reduce((s, r) => s + Number(r.capex_pct), 0) / qRows.length;
+    result[q] = Math.round(avg * 10) / 10;
+  }
+
+  return result;
+}
+
 // GET — read a tab, or action=data for pre-processed page data
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -57,7 +135,6 @@ export async function GET(req: NextRequest) {
         supabase.from('config').select('ticker, quarter, company, type, default_url'),
       ]);
 
-      type SigRow = Record<string, unknown> & { quarter?: string; extracted_at?: string };
       type CfgRow = Record<string, unknown> & { ticker?: string; quarter?: string; company?: string; type?: string; default_url?: string };
 
       const signals = ((signalsRows ?? []) as SigRow[]).map(r => ({
@@ -85,7 +162,10 @@ export async function GET(req: NextRequest) {
       dates.sort();
       const lastIngested = dates.at(-1) ?? '';
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested });
+      const supplyByQuarter = computeSupplyByQuarter(signals);
+      const demandByQuarter = computeDemandByQuarter(signals);
+
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, demandByQuarter });
     } catch (error) {
       console.error('Supabase data error:', error);
       return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '' });
