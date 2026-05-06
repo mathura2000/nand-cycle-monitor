@@ -349,7 +349,7 @@ export default function SignalsPage({
   };
   const tabActive = (tab: 'supply' | 'demand'): React.CSSProperties => ({
     ...tabBase,
-    borderColor: tab === 'supply' ? '#c9a84c44' : '#4a7fa544',
+    border: `0.5px solid ${tab === 'supply' ? '#c9a84c44' : '#4a7fa544'}`,
     color: tab === 'supply' ? '#c9a84c' : '#4a7fa5',
     background: tab === 'supply' ? '#16120a' : '#0a0f16',
   });

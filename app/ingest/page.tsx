@@ -27,7 +27,7 @@ const COMPANY_META: Record<string, { name: string; type: 'vendor' | 'hyperscaler
   META:  { name: 'Meta',      type: 'hyperscaler' },
 };
 
-const SNDK_NA = new Set(['Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024']);
+const SNDK_NA = new Set(['Q4 2024', 'Q3 2024', 'Q2 2024']);
 
 // ── Status cell rendering ─────────────────────────────────────────────────────
 
@@ -64,6 +64,7 @@ export default function IngestPage() {
   const [skippedCurrent, setSkippedCurrent] = useState(false);
   const [naTooltip, setNaTooltip] = useState<string | null>(null);
   const [batch, setBatch] = useState<BatchProgress | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Company dropdown open state
   const [companyOpen, setCompanyOpen] = useState(false);
@@ -153,8 +154,9 @@ export default function IngestPage() {
       if (data.skipped) {
         setStatus('↩ Data is current in DB — no re-extraction needed.');
         setSkippedCurrent(true);
+        await loadGrid();
       } else if (data.success) {
-        setStatus('✓ Ingested successfully.');
+        setStatus(data.quarterWarning ? `✓ Ingested — ⚠ ${data.quarterWarning}` : '✓ Ingested successfully.');
         setPasteText('');
         setPdfFile(null);
         setSkippedCurrent(false);
@@ -459,7 +461,19 @@ export default function IngestPage() {
               <span style={{ fontSize: 10, color: '#6a6050' }}>Upload PDF</span>
               <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>if no paste</span>
             </div>
-            <label className="upload-zone" style={{ display: 'block' }}>
+            <label
+              className="upload-zone"
+              style={{ display: 'block', borderColor: isDragging ? '#6a5020' : undefined, background: isDragging ? '#161008' : undefined }}
+              onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+              onDragEnter={e => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={e => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file?.type === 'application/pdf' || file?.name.endsWith('.pdf')) setPdfFile(file);
+              }}
+            >
               <input
                 type="file"
                 accept=".pdf"
@@ -468,6 +482,8 @@ export default function IngestPage() {
               />
               {pdfFile ? (
                 <span style={{ color: '#6a5020' }}>{pdfFile.name} ({(pdfFile.size / 1024).toFixed(0)} KB)</span>
+              ) : isDragging ? (
+                <span style={{ color: '#6a5020' }}>drop PDF here</span>
               ) : (
                 'drag PDF here or click to choose'
               )}
@@ -484,13 +500,24 @@ export default function IngestPage() {
               <span style={{ fontSize: 10, color: '#6a6050' }}>Default URL</span>
               <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>fallback · editable</span>
             </div>
-            <input
-              type="text"
-              value={urlOverride}
-              onChange={e => setUrlOverride(e.target.value)}
-              placeholder={defaultUrl || 'no default URL for this quarter — enter one or paste above'}
-              style={{ display: 'block', width: '100%', background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#6a6050', fontSize: 10, padding: '5px 8px', outline: 'none', fontFamily: 'sans-serif', boxSizing: 'border-box' }}
-            />
+            <div style={{ display: 'flex', gap: 4 }}>
+              <input
+                type="text"
+                value={urlOverride || defaultUrl}
+                onChange={e => setUrlOverride(e.target.value)}
+                placeholder="no default URL for this quarter — enter one or paste above"
+                style={{ flex: 1, minWidth: 0, background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#6a6050', fontSize: 10, padding: '5px 8px', outline: 'none', fontFamily: 'sans-serif', boxSizing: 'border-box' }}
+              />
+              {(urlOverride || defaultUrl) && (
+                <button
+                  onClick={() => navigator.clipboard.writeText(urlOverride || defaultUrl)}
+                  title="Copy URL"
+                  style={{ flexShrink: 0, padding: '4px 7px', background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#3a3528', fontSize: 9, cursor: 'pointer', fontFamily: 'sans-serif' }}
+                >
+                  copy
+                </button>
+              )}
+            </div>
             <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 4, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
               Pre-populated from config table. Override if wrong. Server fetches + stores raw text.
             </div>
@@ -518,7 +545,7 @@ export default function IngestPage() {
             )}
           </div>
 
-          <div style={{ fontSize: 9, color: status.startsWith('✓') ? '#4a9a6a' : status.startsWith('↩') ? '#3a5a3a' : status.startsWith('Error') ? '#9a4a4a' : '#252218', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
+          <div style={{ fontSize: 9, color: status.includes('⚠') ? '#9a7a2a' : status.startsWith('✓') ? '#4a9a6a' : status.startsWith('↩') ? '#3a5a3a' : status.startsWith('Error') ? '#9a4a4a' : '#252218', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
             {status || 'stores raw transcript → extracts signals → grid cell turns green'}
           </div>
         </div>

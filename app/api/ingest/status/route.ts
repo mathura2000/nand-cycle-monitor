@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 
 const TICKERS = ['SNDK', 'MU', 'SSNLF', 'HXSCL', 'MSFT', 'GOOG', 'AMZN', 'META'];
 const QUARTERS = ['Q1 2026', 'Q4 2025', 'Q3 2025', 'Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024'];
-const SNDK_NA = new Set(['Q2 2025', 'Q1 2025', 'Q4 2024', 'Q3 2024', 'Q2 2024']);
+const SNDK_NA = new Set(['Q4 2024', 'Q3 2024', 'Q2 2024']);
 
 interface TranscriptRow { ticker: string; quarter: string; }
 interface SignalRow {
