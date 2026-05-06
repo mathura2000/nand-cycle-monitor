@@ -262,11 +262,11 @@ export default function OverviewPage() {
       background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10,
       padding: '20px 22px 14px', marginBottom: 10,
     },
-    chartLabel: { fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 5 },
+    chartLabel: { fontSize: 9, color: '#7a6e58', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 5 },
     chartTitle: { fontSize: 14, fontWeight: 500, color: '#d4c090', marginBottom: 2 },
-    chartSub: { fontSize: 10, color: '#2e2c24', marginBottom: 14 },
+    chartSub: { fontSize: 10, color: '#7a6e58', marginBottom: 14 },
     legend: { display: 'flex', gap: 18, marginBottom: 12 },
-    legItem: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#4a4535' },
+    legItem: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#8a7e68' },
     legDot: { width: 8, height: 8, borderRadius: '50%' },
     panel: {
       background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10,
@@ -274,7 +274,7 @@ export default function OverviewPage() {
     },
     panelHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
     sigRow: { display: 'flex', alignItems: 'center', marginBottom: 10 },
-    sigName: { fontSize: 11, color: '#6a6050', width: 110, flexShrink: 0 },
+    sigName: { fontSize: 11, color: '#a09080', width: 110, flexShrink: 0 },
     sigStatus: { fontSize: 10, minWidth: 72, textAlign: 'right' },
   };
 
@@ -373,10 +373,10 @@ export default function OverviewPage() {
           onMouseLeave={e => (e.currentTarget.style.borderColor = '#1e1c18')}
         >
           <div style={S.panelHead as React.CSSProperties}>
-            <span style={{ fontSize: 9, color: '#c9a84c', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#c9a84c', letterSpacing: '0.10em', textTransform: 'uppercase' }}>
               Supply pressure signals
             </span>
-            <span style={{ fontSize: 10, color: '#2e2c24' }}>drill in →</span>
+            <span style={{ fontSize: 10, color: '#6a6050' }}>drill in →</span>
           </div>
           {supplySignals.map(sig => (
             <div key={sig.name} style={S.sigRow as React.CSSProperties}>
@@ -397,10 +397,10 @@ export default function OverviewPage() {
           onMouseLeave={e => (e.currentTarget.style.borderColor = '#1e1c18')}
         >
           <div style={S.panelHead as React.CSSProperties}>
-            <span style={{ fontSize: 9, color: '#4a7fa5', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#4a7fa5', letterSpacing: '0.10em', textTransform: 'uppercase' }}>
               Demand health signals
             </span>
-            <span style={{ fontSize: 10, color: '#2e2c24' }}>drill in →</span>
+            <span style={{ fontSize: 10, color: '#6a6050' }}>drill in →</span>
           </div>
           {demandSignals.map(sig => (
             <div key={sig.name} style={S.sigRow as React.CSSProperties}>

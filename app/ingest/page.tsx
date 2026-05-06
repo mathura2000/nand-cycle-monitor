@@ -255,7 +255,7 @@ export default function IngestPage() {
         .fake-dd-menu { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; background: #161410; border: 0.5px solid #2a2520; border-radius: 5px; margin-top: 2px; max-height: 220px; overflow-y: auto; }
         .fake-dd-item { padding: 6px 10px; font-size: 11px; color: #c9a84c; cursor: pointer; }
         .fake-dd-item:hover { background: #1e1a14; }
-        .upload-zone { border: 0.5px dashed #1e1c18; border-radius: 5px; padding: 10px; text-align: center; font-size: 10px; color: #252218; cursor: pointer; }
+        .upload-zone { border: 0.5px dashed #1e1c18; border-radius: 5px; padding: 10px; text-align: center; font-size: 10px; color: #6a6050; cursor: pointer; }
         .upload-zone:hover { border-color: #2a2520; }
         @keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.25} }
       `}</style>
@@ -265,7 +265,7 @@ export default function IngestPage() {
         {/* ── Left: grid ── */}
         <div style={{ flex: '0 0 390px', background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: '#8a7e68', letterSpacing: '0.10em', textTransform: 'uppercase' }}>
               Data history status
             </div>
             <button
@@ -304,7 +304,7 @@ export default function IngestPage() {
               <tr>
                 <th style={{ fontSize: 9, fontWeight: 500, color: '#3a3528', letterSpacing: '0.06em', padding: '3px 4px', textAlign: 'left', borderBottom: '0.5px solid #1e1c18', width: 30 }} />
                 {TICKERS.map(t => (
-                  <th key={t} style={{ fontSize: 9, fontWeight: 500, color: '#3a3528', letterSpacing: '0.06em', padding: '3px 4px', textAlign: 'center', borderBottom: '0.5px solid #1e1c18' }}>
+                  <th key={t} style={{ fontSize: 9, fontWeight: 500, color: '#7a6e58', letterSpacing: '0.06em', padding: '3px 4px', textAlign: 'center', borderBottom: '0.5px solid #1e1c18' }}>
                     {t}
                   </th>
                 ))}
@@ -313,7 +313,7 @@ export default function IngestPage() {
             <tbody>
               {QUARTERS.map((q, qi) => (
                 <tr key={q}>
-                  <td style={{ fontSize: 9, color: '#2e2c24', paddingLeft: 6, fontWeight: 500, borderBottom: '0.5px solid #161410', cursor: 'default' }}>
+                  <td style={{ fontSize: 9, color: '#6a6050', paddingLeft: 6, fontWeight: 500, borderBottom: '0.5px solid #161410', cursor: 'default' }}>
                     {QUARTER_LABELS[qi]}
                   </td>
                   {TICKERS.map(ticker => {
@@ -346,7 +346,7 @@ export default function IngestPage() {
               { label: 'review',  el: <span style={{ color: '#6a5020', fontSize: 11 }}>▲</span> },
               { label: 'pre-IPO', el: <span style={{ color: '#252218', fontSize: 10 }}>—</span> },
             ].map(({ label, el }) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: '#2e2c24' }}>
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: '#6a6050' }}>
                 {el} {label}
               </div>
             ))}
@@ -366,15 +366,15 @@ export default function IngestPage() {
 
         {/* ── Right: panel ── */}
         <div style={{ flex: 1, minWidth: 0, background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
-          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#8a7e68', letterSpacing: '0.10em', textTransform: 'uppercase', marginBottom: 12 }}>
             Data ingestion
           </div>
 
           {/* Company + Quarter selectors */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
-                Company <span style={{ fontSize: 8, color: '#252218', textTransform: 'none', letterSpacing: 0, marginLeft: 3 }}>(set by grid)</span>
+              <div style={{ fontSize: 9, color: '#7a6e58', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                Company <span style={{ fontSize: 8, color: '#5a5448', textTransform: 'none', letterSpacing: 0, marginLeft: 3 }}>(set by grid)</span>
               </div>
               <div className="fake-dd">
                 <div
@@ -382,7 +382,7 @@ export default function IngestPage() {
                   style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#c9a84c', fontSize: 11, padding: '5px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                 >
                   {companyLabel}
-                  <span style={{ fontSize: 8, color: '#3a3528', marginLeft: 6 }}>▾</span>
+                  <span style={{ fontSize: 8, color: '#6a6050', marginLeft: 6 }}>▾</span>
                 </div>
                 {companyOpen && (
                   <div className="fake-dd-menu">
@@ -401,8 +401,8 @@ export default function IngestPage() {
             </div>
 
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
-                Quarter <span style={{ fontSize: 8, color: '#252218', textTransform: 'none', letterSpacing: 0, marginLeft: 3 }}>(set by grid)</span>
+              <div style={{ fontSize: 9, color: '#7a6e58', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                Quarter <span style={{ fontSize: 8, color: '#5a5448', textTransform: 'none', letterSpacing: 0, marginLeft: 3 }}>(set by grid)</span>
               </div>
               <div className="fake-dd">
                 <div
@@ -410,7 +410,7 @@ export default function IngestPage() {
                   style={{ background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#c9a84c', fontSize: 11, padding: '5px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                 >
                   {selectedQuarter}
-                  <span style={{ fontSize: 8, color: '#3a3528', marginLeft: 6 }}>▾</span>
+                  <span style={{ fontSize: 8, color: '#6a6050', marginLeft: 6 }}>▾</span>
                 </div>
                 {quarterOpen && (
                   <div className="fake-dd-menu">
@@ -431,8 +431,8 @@ export default function IngestPage() {
 
           <div style={{ borderTop: '0.5px solid #1a1812', margin: '12px 0' }} />
 
-          <div style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-            Input source <span style={{ color: '#252218', textTransform: 'none', letterSpacing: 0, fontSize: 8, marginLeft: 4 }}>· first populated wins · raw text always stored</span>
+          <div style={{ fontSize: 9, color: '#7a6e58', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Input source <span style={{ color: '#5a5448', textTransform: 'none', letterSpacing: 0, fontSize: 8, marginLeft: 4 }}>· first populated wins · raw text always stored</span>
           </div>
 
           {/* Priority 1: Paste */}
@@ -440,7 +440,7 @@ export default function IngestPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
               <div style={{ width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500, flexShrink: 0, background: '#0d1a08', color: '#2a5a32', border: '0.5px solid #2a4a2a' }}>1</div>
               <span style={{ fontSize: 10, color: '#6a6050' }}>Paste transcript</span>
-              <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>highest priority</span>
+              <span style={{ fontSize: 9, color: '#5a5448', marginLeft: 'auto' }}>highest priority</span>
             </div>
             <textarea
               value={pasteText}
@@ -459,7 +459,7 @@ export default function IngestPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
               <div style={{ width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500, flexShrink: 0, background: '#161008', color: '#6a5020', border: '0.5px solid #4a3a18' }}>2</div>
               <span style={{ fontSize: 10, color: '#6a6050' }}>Upload PDF</span>
-              <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>if no paste</span>
+              <span style={{ fontSize: 9, color: '#5a5448', marginLeft: 'auto' }}>if no paste</span>
             </div>
             <label
               className="upload-zone"
@@ -498,7 +498,7 @@ export default function IngestPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
               <div style={{ width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500, flexShrink: 0, background: '#100a08', color: '#5a2a20', border: '0.5px solid #3a2018' }}>3</div>
               <span style={{ fontSize: 10, color: '#6a6050' }}>Default URL</span>
-              <span style={{ fontSize: 9, color: '#252218', marginLeft: 'auto' }}>fallback · editable</span>
+              <span style={{ fontSize: 9, color: '#5a5448', marginLeft: 'auto' }}>fallback · editable</span>
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
               <input
@@ -512,7 +512,7 @@ export default function IngestPage() {
                 <button
                   onClick={() => navigator.clipboard.writeText(urlOverride || defaultUrl)}
                   title="Copy URL"
-                  style={{ flexShrink: 0, padding: '4px 7px', background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#3a3528', fontSize: 9, cursor: 'pointer', fontFamily: 'sans-serif' }}
+                  style={{ flexShrink: 0, padding: '4px 7px', background: '#161410', border: '0.5px solid #2a2520', borderRadius: 5, color: '#6a6050', fontSize: 9, cursor: 'pointer', fontFamily: 'sans-serif' }}
                 >
                   copy
                 </button>
@@ -545,7 +545,7 @@ export default function IngestPage() {
             )}
           </div>
 
-          <div style={{ fontSize: 9, color: status.includes('⚠') ? '#9a7a2a' : status.startsWith('✓') ? '#4a9a6a' : status.startsWith('↩') ? '#3a5a3a' : status.startsWith('Error') ? '#9a4a4a' : '#252218', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
+          <div style={{ fontSize: 9, color: status.includes('⚠') ? '#9a7a2a' : status.startsWith('✓') ? '#4a9a6a' : status.startsWith('↩') ? '#3a5a3a' : status.startsWith('Error') ? '#9a4a4a' : '#5a5448', textAlign: 'center', marginTop: 5, minHeight: 14 }}>
             {status || 'stores raw transcript → extracts signals → grid cell turns green'}
           </div>
         </div>

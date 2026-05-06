@@ -160,11 +160,11 @@ function EvidenceRow({
           <span style={{ fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' }}>
             {row.ticker}
           </span>
-          <span style={{ fontSize: 10, color: '#3a3528' }}>{row.company}</span>
+          <span style={{ fontSize: 10, color: '#7a6e58' }}>{row.company}</span>
           <span style={{
             fontSize: 9, padding: '2px 7px', borderRadius: 3,
             background: isModeratingDemand ? '#16120a' : (isAlert ? '#16120a' : '#111009'),
-            color: isModeratingDemand ? '#c9a84c' : (isAlert ? (isSupply ? '#c9a84c' : '#4a7fa5') : '#3a3528'),
+            color: isModeratingDemand ? '#c9a84c' : (isAlert ? (isSupply ? '#c9a84c' : '#4a7fa5') : '#7a6e58'),
             border: `0.5px solid ${isModeratingDemand ? '#c9a84c33' : (isAlert ? (isSupply ? '#c9a84c33' : '#4a7fa533') : '#1e1c18')}`,
           }}>
             {badgeText}
@@ -176,7 +176,7 @@ function EvidenceRow({
       </div>
       {quote && (
         <p style={{
-          fontSize: 10, color: '#4a4535', lineHeight: 1.6, fontStyle: 'italic',
+          fontSize: 10, color: '#7a6e58', lineHeight: 1.6, fontStyle: 'italic',
           borderLeft: `1.5px solid ${isAlert ? (isSupply ? '#c9a84c33' : '#4a7fa533') : '#1e1c18'}`,
           paddingLeft: 8, marginBottom: 5,
         }}>
@@ -188,7 +188,7 @@ function EvidenceRow({
           href={transcriptUrl}
           target="_blank"
           rel="noreferrer"
-          style={{ fontSize: 9, color: '#3a3528', letterSpacing: '0.06em', textTransform: 'uppercase', textDecoration: 'none' }}
+          style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.06em', textTransform: 'uppercase', textDecoration: 'none' }}
         >
           View transcript →
         </a>
@@ -310,7 +310,9 @@ export default function SignalsPage({
     const rows = latestRows.filter(r => r.type === typeFilter);
     if (rows.length === 0) return '—';
     const field = def.field as keyof SignalRow;
-    const avg = rows.reduce((s, r) => s + num(r[field] as string), 0) / rows.length;
+    const validRows = rows.filter(r => r[field] != null && r[field] !== '');
+    if (validRows.length === 0) return '—';
+    const avg = validRows.reduce((s, r) => s + num(r[field] as string), 0) / validRows.length;
     const { text } = badge(avg, field, isSupply);
     return text;
   }
@@ -395,7 +397,7 @@ export default function SignalsPage({
         background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10,
         padding: '18px 20px 12px', marginBottom: 12,
       }}>
-        <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 4 }}>
+        <div style={{ fontSize: 9, color: '#8a7e68', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 4 }}>
           {chartLabel} · {quarters.length > 0 ? `${quarters.length} quarter${quarters.length !== 1 ? 's' : ''}` : 'no data'}
         </div>
         <div style={{ fontSize: 13, fontWeight: 500, color: '#d4c090', marginBottom: 12 }}>
@@ -452,7 +454,7 @@ export default function SignalsPage({
 
         {/* Signal list */}
         <div style={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: 16 }}>
-          <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
+          <div style={{ fontSize: 9, color: '#8a7e68', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>
             Signals — click to view evidence
           </div>
           {signalDefs.map(sig => {
@@ -469,7 +471,7 @@ export default function SignalsPage({
                   border: isActive ? `0.5px solid ${accentColor}33` : '0.5px solid transparent',
                 }}
               >
-                <span style={{ fontSize: 11, color: isActive ? accentColor : '#6a6050' }}>
+                <span style={{ fontSize: 11, color: isActive ? accentColor : '#9a8e78' }}>
                   {sig.label}
                 </span>
                 <span style={{ fontSize: 10, color: sigDirColor(sig.key) }}>
@@ -482,7 +484,7 @@ export default function SignalsPage({
 
         {/* Evidence panel */}
         <div style={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '16px 18px' }}>
-          <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>
+          <div style={{ fontSize: 9, color: '#8a7e68', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>
             {activeSigDef.label} — strongest first
           </div>
 
