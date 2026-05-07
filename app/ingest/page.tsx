@@ -65,6 +65,8 @@ export default function IngestPage() {
   const [naTooltip, setNaTooltip] = useState<string | null>(null);
   const [batch, setBatch] = useState<BatchProgress | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [edgarLoading, setEdgarLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Company dropdown open state
   const [companyOpen, setCompanyOpen] = useState(false);
@@ -244,6 +246,34 @@ export default function IngestPage() {
     setBatch({ fetched, extracted, skipped, errors, total: queue.length, current: '', finished: true });
   }
 
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 6000);
+  }
+
+  async function handleEdgarRefresh() {
+    setEdgarLoading(true);
+    try {
+      const res = await fetch('/api/edgar/refresh', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Request failed');
+      const { updated = [], pending = [], skipped = [] } = data;
+      let msg: string;
+      if (updated.length > 0) {
+        const cells = updated.slice(0, 3).map((u: { ticker: string; quarter: string }) => `${u.ticker} ${u.quarter}`).join(', ');
+        const more = updated.length > 3 ? ` +${updated.length - 3} more` : '';
+        msg = `✅ ${updated.length} cells updated: ${cells}${more} | ⏳ ${pending.length} pending | ⏸ ${skipped.length} skipped`;
+      } else {
+        msg = '⏳ No new data — EDGAR not yet filed for latest quarter';
+      }
+      showToast(msg);
+      await loadGrid();
+    } catch {
+      showToast('❌ EDGAR refresh failed');
+    }
+    setEdgarLoading(false);
+  }
+
   const companyLabel = `${COMPANY_META[selectedTicker]?.name ?? selectedTicker} (${selectedTicker})`;
 
   return (
@@ -264,18 +294,8 @@ export default function IngestPage() {
 
         {/* ── Left: grid ── */}
         <div style={{ flex: '0 0 390px', background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '14px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#8a7e68', letterSpacing: '0.10em', textTransform: 'uppercase' }}>
-              Data history status
-            </div>
-            <button
-              onClick={handleIngestAll}
-              disabled={!!batch && !batch.finished}
-              title="Fetch all cells that have a default URL. Cells that can't be fetched server-side will show ✕."
-              style={{ fontSize: 9, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '3px 10px', borderRadius: 3, cursor: (batch && !batch.finished) ? 'default' : 'pointer', background: '#0e1208', color: (batch && !batch.finished) ? '#2a4a2a' : '#4a9a6a', border: `0.5px solid ${(batch && !batch.finished) ? '#1a2a1a' : 'rgba(74,154,106,0.35)'}`, opacity: (batch && !batch.finished) ? 0.6 : 1 }}
-            >
-              {(batch && !batch.finished) ? '…running' : 'Ingest all →'}
-            </button>
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#8a7e68', letterSpacing: '0.10em', textTransform: 'uppercase', marginBottom: 12 }}>
+            Data history status
           </div>
 
           {/* Batch progress */}
@@ -361,6 +381,25 @@ export default function IngestPage() {
 
           <div style={{ fontSize: 9, color: '#4a7a4a', borderLeft: '1.5px solid #2a4a2a', padding: '5px 7px', marginTop: 7, lineHeight: 1.6, background: '#0c110c', borderRadius: '0 4px 4px 0' }}>
             Click any cell to load company + quarter into the ingest panel. Gold outline = selected ({COMPANY_META[selectedTicker]?.name} · {selectedQuarter}).
+          </div>
+
+          {/* Bottom action row */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <button
+              onClick={handleEdgarRefresh}
+              disabled={edgarLoading}
+              style={{ flex: 1, fontSize: 9, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '4px 10px', borderRadius: 3, cursor: edgarLoading ? 'default' : 'pointer', background: '#0c0e14', color: edgarLoading ? '#2a3a5a' : '#4a6a9a', border: `0.5px solid ${edgarLoading ? '#1a2a3a' : 'rgba(74,106,154,0.35)'}`, opacity: edgarLoading ? 0.6 : 1 }}
+            >
+              {edgarLoading ? 'Fetching EDGAR…' : 'Refresh 10-Q data'}
+            </button>
+            <button
+              onClick={handleIngestAll}
+              disabled={!!batch && !batch.finished}
+              title="Fetch all cells that have a default URL. Cells that can't be fetched server-side will show ✕."
+              style={{ flex: 1, fontSize: 9, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '4px 10px', borderRadius: 3, cursor: (batch && !batch.finished) ? 'default' : 'pointer', background: '#0e1208', color: (batch && !batch.finished) ? '#2a4a2a' : '#4a9a6a', border: `0.5px solid ${(batch && !batch.finished) ? '#1a2a1a' : 'rgba(74,154,106,0.35)'}`, opacity: (batch && !batch.finished) ? 0.6 : 1 }}
+            >
+              {(batch && !batch.finished) ? '…running' : 'Ingest all →'}
+            </button>
           </div>
         </div>
 
@@ -550,6 +589,11 @@ export default function IngestPage() {
           </div>
         </div>
       </div>
+      {toast && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#0e0c09', border: '0.5px solid #2a2520', borderRadius: 6, padding: '8px 14px', fontSize: 10, color: '#c8b87a', zIndex: 100, maxWidth: 520, textAlign: 'center', boxShadow: '0 2px 12px rgba(0,0,0,0.6)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
