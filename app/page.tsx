@@ -106,6 +106,53 @@ function demandToneDir(v: number): Dir {
   return { label: '→ cooling', cls: 'watch' };
 }
 
+// ── Chart tooltip ─────────────────────────────────────────────────────────
+
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color: string }>;
+  label?: string;
+  narratives: Record<string, string>;
+}
+
+function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps) {
+  if (!active || !payload?.length || !label) return null;
+  const narrative = narratives[label];
+  const labelMap: Record<string, string> = {
+    leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply',
+    demand: 'Demand', inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
+  };
+  return (
+    <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 260 }}>
+      <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 6 }}>{label}</div>
+      {payload.map(p => (
+        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 2 }}>
+          <span style={{ fontSize: 10, color: p.color }}>{labelMap[p.name] ?? p.name}</span>
+          <span style={{ fontSize: 10, color: '#9a8e78' }}>
+            {p.name === 'inventoryDays'
+              ? `${p.value.toFixed(0)}d`
+              : p.name === 'tfPrice'
+              ? `${p.value > 0 ? '+' : ''}${p.value.toFixed(1)}%`
+              : `${p.value.toFixed(1)}%`}
+          </span>
+        </div>
+      ))}
+      {narrative && (
+        <>
+          <div style={{ borderTop: '0.5px solid #1e1c18', margin: '8px 0 6px' }} />
+          <p style={{ fontSize: 10, color: '#7a6e58', lineHeight: 1.6, margin: '0 0 6px' }}>{narrative}</p>
+          <a
+            href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
+            style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none' }}
+          >
+            drill in →
+          </a>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Sparkline component ────────────────────────────────────────────────────
 
 function Spark({ values, color }: { values: number[]; color: string }) {
@@ -176,7 +223,6 @@ export default function OverviewPage() {
   const [mounted, setMounted] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showTfPrice, setShowTfPrice] = useState(false);
-  const [hoveredQuarter, setHoveredQuarter] = useState('');
 
   useEffect(() => {
     setMounted(true);
@@ -350,9 +396,7 @@ export default function OverviewPage() {
 
         {mounted ? (
           <ResponsiveContainer width="100%" height={190}>
-            <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
-              onMouseMove={(e: { activeLabel?: string }) => { if (e.activeLabel) setHoveredQuarter(e.activeLabel); }}
-            >
+            <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 dataKey="quarter"
@@ -392,15 +436,8 @@ export default function OverviewPage() {
                 />
               )}
               <Tooltip
-                contentStyle={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 6, fontSize: 11 }}
-                labelStyle={{ color: '#7a6e54' }}
-                formatter={(v: unknown, name: unknown) => {
-                  const n = name as string;
-                  if (n === 'inventoryDays') return [`${Number(v).toFixed(0)} days`, 'Inventory Days'];
-                  if (n === 'tfPrice') return [`${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}%`, 'NAND Price QoQ%'];
-                  const labels: Record<string, string> = { leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply', demand: 'Demand' };
-                  return [`${Number(v).toFixed(1)}%`, labels[n] ?? n];
-                }}
+                content={<ChartTooltip narratives={data.narratives ?? {}} />}
+                wrapperStyle={{ pointerEvents: 'auto' }}
               />
               <Line
                 dataKey="leadingSupply" name="leadingSupply" yAxisId="y"
@@ -441,25 +478,6 @@ export default function OverviewPage() {
         ) : (
           <div style={{ height: 190 }} />
         )}
-        {(() => {
-          const nq = hoveredQuarter || latestQ;
-          const text = data.narratives?.[nq];
-          if (!text) return null;
-          return (
-            <div style={{ marginTop: 10, padding: '10px 14px', background: '#0d0b07', border: '0.5px solid #2a2518', borderRadius: 6 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <p style={{ fontSize: 11, color: '#9a8e78', lineHeight: 1.6, margin: 0, flex: 1 }}>{text}</p>
-                <a
-                  href={`/signals?quarter=${nq.replace(' ', '+')}&tab=supply`}
-                  style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
-                >
-                  drill in →
-                </a>
-              </div>
-              <div style={{ fontSize: 9, color: '#555', marginTop: 4, letterSpacing: '0.06em' }}>{nq}</div>
-            </div>
-          );
-        })()}
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
