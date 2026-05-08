@@ -122,6 +122,21 @@ function computeDemandByQuarter(signals: SigRow[]): Record<string, number | null
   return result;
 }
 
+function computeInventoryByQuarter(signals: SigRow[]): Record<string, number | null> {
+  const vendors = signals.filter(r => r.type === 'vendor');
+  const quarters = [...new Set(vendors.map(r => r.quarter as string))];
+  const result: Record<string, number | null> = {};
+
+  for (const q of quarters) {
+    const rows = vendors.filter(r => r.quarter === q && r.inventory_days != null && r.inventory_days !== '');
+    if (rows.length === 0) { result[q] = null; continue; }
+    const avg = rows.reduce((s, r) => s + Number(r.inventory_days), 0) / rows.length;
+    result[q] = Math.round(avg * 10) / 10;
+  }
+
+  return result;
+}
+
 // GET — read a tab, or action=data for pre-processed page data
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -130,9 +145,10 @@ export async function GET(req: NextRequest) {
   // Structured data endpoint used by page components — reads from Supabase
   if (action === 'data') {
     try {
-      const [{ data: signalsRows }, { data: configRows }] = await Promise.all([
+      const [{ data: signalsRows }, { data: configRows }, { data: pricingRows }] = await Promise.all([
         supabase.from('signals').select('*').order('quarter', { ascending: true }),
         supabase.from('config').select('ticker, quarter, company, type, default_url'),
+        supabase.from('pricing').select('quarter, nand_price_qoq_pct'),
       ]);
 
       type CfgRow = Record<string, unknown> & { ticker?: string; quarter?: string; company?: string; type?: string; default_url?: string };
@@ -164,11 +180,20 @@ export async function GET(req: NextRequest) {
 
       const supplyByQuarter = computeSupplyByQuarter(signals);
       const demandByQuarter = computeDemandByQuarter(signals);
+      const inventoryByQuarter = computeInventoryByQuarter(signals);
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, demandByQuarter });
+      type PricingRow = { quarter: string; nand_price_qoq_pct: string | null };
+      const tfPricingByQuarter: Record<string, number | null> = {};
+      for (const row of (pricingRows ?? []) as PricingRow[]) {
+        tfPricingByQuarter[row.quarter] = row.nand_price_qoq_pct != null ? Number(row.nand_price_qoq_pct) : null;
+      }
+      const sortedPricingQs = Object.keys(tfPricingByQuarter).sort((a, b) => quarterIndex(a) - quarterIndex(b));
+      const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
+
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, demandByQuarter, inventoryByQuarter, tfPricingByQuarter, latestTfPrice });
     } catch (error) {
       console.error('Supabase data error:', error);
-      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '' });
+      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null });
     }
   }
 
