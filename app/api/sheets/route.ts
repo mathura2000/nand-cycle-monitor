@@ -147,11 +147,11 @@ export async function GET(req: NextRequest) {
     try {
       const [{ data: signalsRows }, { data: configRows }, { data: pricingRows }] = await Promise.all([
         supabase.from('signals').select('*').order('quarter', { ascending: true }),
-        supabase.from('config').select('ticker, quarter, company, type, default_url'),
+        supabase.from('config').select('ticker, quarter, company, type, default_url, notes'),
         supabase.from('pricing').select('quarter, nand_price_qoq_pct'),
       ]);
 
-      type CfgRow = Record<string, unknown> & { ticker?: string; quarter?: string; company?: string; type?: string; default_url?: string };
+      type CfgRow = Record<string, unknown> & { ticker?: string; quarter?: string; company?: string; type?: string; default_url?: string; notes?: string };
 
       const signals = ((signalsRows ?? []) as SigRow[]).map(r => ({
         ...r,
@@ -166,7 +166,12 @@ export async function GET(req: NextRequest) {
         default_url: r.default_url ?? '',
       }));
 
-      const quarters = [...new Set(signals.map(r => r.quarter as string).filter(Boolean))];
+      const narratives: Record<string, string> = {};
+      for (const r of (configRows ?? []) as CfgRow[]) {
+        if (r.ticker === 'SIGNAL' && r.quarter && r.notes) narratives[r.quarter] = r.notes;
+      }
+
+      const quarters =[...new Set(signals.map(r => r.quarter as string).filter(Boolean))];
       quarters.sort();
       const latestQuarter = quarters.at(-1) ?? '';
 
@@ -190,7 +195,7 @@ export async function GET(req: NextRequest) {
       const sortedPricingQs = Object.keys(tfPricingByQuarter).sort((a, b) => quarterIndex(a) - quarterIndex(b));
       const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, demandByQuarter, inventoryByQuarter, tfPricingByQuarter, latestTfPrice });
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, demandByQuarter, inventoryByQuarter, tfPricingByQuarter, latestTfPrice, narratives });
     } catch (error) {
       console.error('Supabase data error:', error);
       return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null });

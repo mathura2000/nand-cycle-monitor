@@ -26,6 +26,7 @@ interface ApiData {
   inventoryByQuarter: Record<string, number | null>;
   tfPricingByQuarter: Record<string, number | null>;
   latestTfPrice: number | null;
+  narratives: Record<string, string>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -105,6 +106,53 @@ function demandToneDir(v: number): Dir {
   return { label: '→ cooling', cls: 'watch' };
 }
 
+// ── Chart tooltip ─────────────────────────────────────────────────────────
+
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color: string }>;
+  label?: string;
+  narratives: Record<string, string>;
+}
+
+function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps) {
+  if (!active || !payload?.length || !label) return null;
+  const narrative = narratives[label];
+  const labelMap: Record<string, string> = {
+    leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply',
+    demand: 'Demand', inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
+  };
+  return (
+    <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 260 }}>
+      <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 6 }}>{label}</div>
+      {payload.map(p => (
+        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 2 }}>
+          <span style={{ fontSize: 10, color: p.color }}>{labelMap[p.name] ?? p.name}</span>
+          <span style={{ fontSize: 10, color: '#9a8e78' }}>
+            {p.name === 'inventoryDays'
+              ? `${p.value.toFixed(0)}d`
+              : p.name === 'tfPrice'
+              ? `${p.value > 0 ? '+' : ''}${p.value.toFixed(1)}%`
+              : `${p.value.toFixed(1)}%`}
+          </span>
+        </div>
+      ))}
+      {narrative && (
+        <>
+          <div style={{ borderTop: '0.5px solid #1e1c18', margin: '8px 0 6px' }} />
+          <p style={{ fontSize: 10, color: '#7a6e58', lineHeight: 1.6, margin: '0 0 6px' }}>{narrative}</p>
+          <a
+            href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
+            style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none' }}
+          >
+            drill in →
+          </a>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Sparkline component ────────────────────────────────────────────────────
 
 function Spark({ values, color }: { values: number[]; color: string }) {
@@ -181,7 +229,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
   }, []);
 
   if (!data) {
@@ -388,15 +436,8 @@ export default function OverviewPage() {
                 />
               )}
               <Tooltip
-                contentStyle={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 6, fontSize: 11 }}
-                labelStyle={{ color: '#7a6e54' }}
-                formatter={(v: unknown, name: unknown) => {
-                  const n = name as string;
-                  if (n === 'inventoryDays') return [`${Number(v).toFixed(0)} days`, 'Inventory Days'];
-                  if (n === 'tfPrice') return [`${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}%`, 'NAND Price QoQ%'];
-                  const labels: Record<string, string> = { leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply', demand: 'Demand' };
-                  return [`${Number(v).toFixed(1)}%`, labels[n] ?? n];
-                }}
+                content={<ChartTooltip narratives={data.narratives ?? {}} />}
+                wrapperStyle={{ pointerEvents: 'auto' }}
               />
               <Line
                 dataKey="leadingSupply" name="leadingSupply" yAxisId="y"
