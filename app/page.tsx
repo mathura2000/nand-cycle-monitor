@@ -23,6 +23,9 @@ interface ApiData {
   sourcesCount: number;
   supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>;
   demandByQuarter: Record<string, number | null>;
+  inventoryByQuarter: Record<string, number | null>;
+  tfPricingByQuarter: Record<string, number | null>;
+  latestTfPrice: number | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -170,13 +173,15 @@ export default function OverviewPage() {
   const router = useRouter();
   const [data, setData] = useState<ApiData | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [showInventory, setShowInventory] = useState(false);
+  const [showTfPrice, setShowTfPrice] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null }));
   }, []);
 
   if (!data) {
@@ -216,10 +221,13 @@ export default function OverviewPage() {
     leadingSupply: data.supplyByQuarter[q]?.leading ?? null,
     trailingSupply: data.supplyByQuarter[q]?.trailing ?? null,
     demand: data.demandByQuarter[q] ?? null,
+    inventoryDays: data.inventoryByQuarter?.[q] ?? null,
+    tfPrice: data.tfPricingByQuarter?.[q] ?? null,
   }));
 
   const latestLeadingSupply = data.supplyByQuarter[latestQ]?.leading ?? null;
   const latestDemand = data.demandByQuarter[latestQ] ?? null;
+  const latestTfPrice = data.latestTfPrice ?? null;
 
   // ── Sparkline series (per-quarter averages) ──────────────────────────────
   const qVendors = (q: string) => signals.filter(r => r.quarter === q && r.type === 'vendor');
@@ -232,8 +240,17 @@ export default function OverviewPage() {
   const sparkAsp = quarters.map(q => avg(qVendors(q), 'asp_change_pct'));
   const sparkHCapex = quarters.map(q => avg(qHypers(q), 'capex_pct'));
   const sparkHTone = quarters.map(q => avg(qHypers(q), 'mgmt_tone_score'));
+  const sparkTfPrice = quarters.map(q => data.tfPricingByQuarter?.[q] ?? 0);
 
   // ── Supply signal directions ─────────────────────────────────────────────
+  function tfPriceDir(v: number | null): Dir {
+    if (v === null) return { label: '—', cls: 'stable' };
+    if (v > 30) return { label: '↑↑ surging', cls: 'ok' };
+    if (v > 0) return { label: '↑ rising', cls: 'ok' };
+    if (v > -10) return { label: '→ softening', cls: 'stable' };
+    return { label: '↓ declining', cls: 'watch' };
+  }
+
   const avgCapex = avg(vendors, 'capex_pct');
   const hasNodeNote = vendors.some(r => r.node_transition_note?.trim());
   const avgInv = avg(vendors, 'inventory_days');
@@ -242,12 +259,13 @@ export default function OverviewPage() {
   const avgHCapex = avg(hyperscalers, 'capex_pct');
   const avgHTone = avg(hyperscalers, 'mgmt_tone_score');
 
-  const supplySignals: Array<{ name: string; spark: number[]; dir: Dir; color: string }> = [
+  const supplySignals: Array<{ name: string; spark: number[]; dir: Dir; color: string; attribution?: string }> = [
     { name: 'CapEx trending',   spark: sparkCapex,    dir: capexDir(avgCapex),       color: avgCapex > 25 ? '#c9a84c' : '#3a3528' },
     { name: 'Node transitions', spark: sparkBitGrowth, dir: nodeDir(hasNodeNote),    color: hasNodeNote ? '#c9a84c' : '#3a3528' },
     { name: 'Inventory days',   spark: sparkInv,       dir: invDir(avgInv),          color: avgInv > 80 ? '#c9a84c' : '#3a3528' },
     { name: 'Mgmt tone',        spark: sparkTone,      dir: toneDir(avgTone),        color: avgTone < 2.5 ? '#c9a84c' : '#3a3528' },
     { name: 'ASP trajectory',   spark: sparkAsp,       dir: aspDir(avgAsp),          color: avgAsp > 0 ? '#4a7fa5' : '#c9a84c' },
+    { name: 'NAND Contract Price', spark: sparkTfPrice, dir: tfPriceDir(latestTfPrice), color: latestTfPrice !== null && latestTfPrice > 0 ? '#5dcaa5' : '#3a3528', attribution: 'TrendForce' },
   ];
 
   const demandSignals: Array<{ name: string; spark: number[]; dir: Dir; color: string }> = [
@@ -291,6 +309,16 @@ export default function OverviewPage() {
         <div style={S.chartSub as React.CSSProperties}>
           Leading supply (node transitions + vendor capex) vs hyperscaler CapEx YoY · {quarters.length} quarter{quarters.length !== 1 ? 's' : ''}
         </div>
+        <div style={{ display: 'flex', gap: 14, marginBottom: 10 }}>
+          <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+            <input type="checkbox" checked={showInventory} onChange={e => setShowInventory(e.target.checked)} style={{ accentColor: '#d4537e' }} />
+            Inventory Days
+          </label>
+          <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+            <input type="checkbox" checked={showTfPrice} onChange={e => setShowTfPrice(e.target.checked)} style={{ accentColor: '#5dcaa5' }} />
+            NAND Price QoQ%
+          </label>
+        </div>
         <div style={S.legend as React.CSSProperties}>
           <div style={S.legItem as React.CSSProperties}>
             <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="2" /></svg>
@@ -304,11 +332,23 @@ export default function OverviewPage() {
             <div style={{ ...S.legDot, background: '#4a7fa5' }} />
             Demand (hyperscaler CapEx %)
           </div>
+          {showInventory && (
+            <div style={S.legItem as React.CSSProperties}>
+              <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#d4537e" strokeWidth="1.5" strokeDasharray="3 3" /></svg>
+              Inventory Days (right)
+            </div>
+          )}
+          {showTfPrice && (
+            <div style={S.legItem as React.CSSProperties}>
+              <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#5dcaa5" strokeWidth="1.5" strokeDasharray="2 3" /></svg>
+              NAND Price QoQ% (right)
+            </div>
+          )}
         </div>
 
         {mounted ? (
           <ResponsiveContainer width="100%" height={190}>
-            <LineChart data={chartData} margin={{ top: 10, right: 60, left: 0, bottom: 0 }}>
+            <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 dataKey="quarter"
@@ -317,38 +357,81 @@ export default function OverviewPage() {
                 tickLine={false}
               />
               <YAxis
+                yAxisId="y"
                 tick={{ fill: '#6a6050', fontSize: 9, fontFamily: 'var(--font-sans)' }}
                 axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
                 width={36}
               />
+              {showInventory && (
+                <YAxis
+                  yAxisId="inv"
+                  orientation="right"
+                  domain={[100, 180]}
+                  tick={{ fill: '#993556', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: number) => `${v}d`}
+                  width={34}
+                />
+              )}
+              {showTfPrice && (
+                <YAxis
+                  yAxisId="tf"
+                  orientation="right"
+                  tick={{ fill: '#3a8a6a', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: number) => `${v > 0 ? '+' : ''}${v}%`}
+                  width={38}
+                />
+              )}
               <Tooltip
                 contentStyle={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 6, fontSize: 11 }}
                 labelStyle={{ color: '#7a6e54' }}
                 formatter={(v: unknown, name: unknown) => {
+                  const n = name as string;
+                  if (n === 'inventoryDays') return [`${Number(v).toFixed(0)} days`, 'Inventory Days'];
+                  if (n === 'tfPrice') return [`${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}%`, 'NAND Price QoQ%'];
                   const labels: Record<string, string> = { leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply', demand: 'Demand' };
-                  return [`${Number(v).toFixed(1)}%`, labels[name as string] ?? String(name)];
+                  return [`${Number(v).toFixed(1)}%`, labels[n] ?? n];
                 }}
               />
               <Line
-                dataKey="leadingSupply" name="leadingSupply"
+                dataKey="leadingSupply" name="leadingSupply" yAxisId="y"
                 stroke="#c9a84c" strokeWidth={2}
                 dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
                 connectNulls
               />
               <Line
-                dataKey="trailingSupply" name="trailingSupply"
+                dataKey="trailingSupply" name="trailingSupply" yAxisId="y"
                 stroke="#c9a84c" strokeWidth={1.5} strokeDasharray="5 4" strokeOpacity={0.6}
                 dot={false} activeDot={{ r: 3, fill: '#c9a84c' }}
                 connectNulls
               />
               <Line
-                dataKey="demand" name="demand"
+                dataKey="demand" name="demand" yAxisId="y"
                 stroke="#4a7fa5" strokeWidth={2}
                 dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                 connectNulls
               />
+              {showInventory && (
+                <Line
+                  dataKey="inventoryDays" name="inventoryDays" yAxisId="inv"
+                  stroke="#d4537e" strokeWidth={1.5} strokeDasharray="3 3"
+                  dot={false} activeDot={{ r: 3, fill: '#d4537e' }}
+                  connectNulls={false}
+                />
+              )}
+              {showTfPrice && (
+                <Line
+                  dataKey="tfPrice" name="tfPrice" yAxisId="tf"
+                  stroke="#5dcaa5" strokeWidth={1.5} strokeDasharray="2 3"
+                  dot={false} activeDot={{ r: 3, fill: '#5dcaa5' }}
+                  connectNulls
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         ) : (
@@ -380,7 +463,12 @@ export default function OverviewPage() {
           </div>
           {supplySignals.map(sig => (
             <div key={sig.name} style={S.sigRow as React.CSSProperties}>
-              <span style={S.sigName as React.CSSProperties}>{sig.name}</span>
+              <span style={S.sigName as React.CSSProperties}>
+                {sig.name}
+                {sig.attribution && (
+                  <span style={{ display: 'block', fontSize: 9, color: '#555', letterSpacing: '0.04em' }}>{sig.attribution}</span>
+                )}
+              </span>
               <Spark values={sig.spark} color={sig.color} />
               <span style={{ ...S.sigStatus, color: dirColor(sig.dir.cls) } as React.CSSProperties}>
                 {sig.dir.label}

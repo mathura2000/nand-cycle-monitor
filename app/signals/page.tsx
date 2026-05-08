@@ -26,6 +26,8 @@ interface ApiData {
   signals: SignalRow[];
   config: ConfigRow[];
   latestQuarter: string;
+  tfPricingByQuarter: Record<string, number | null>;
+  latestTfPrice: number | null;
 }
 
 // ── Signal definitions ─────────────────────────────────────────────────────
@@ -140,9 +142,10 @@ function EvidenceRow({
   isSupply: boolean;
   transcriptUrl: string;
 }) {
-  const rawVal = row[field as keyof SignalRow] as string;
-  const val = num(rawVal);
-  const { text: badgeText, isAlert } = badge(val, field, isSupply);
+  const rawVal = row[field as keyof SignalRow];
+  const hasValue = rawVal != null && rawVal !== '';
+  const val = hasValue ? num(rawVal as string) : 0;
+  const { text: badgeText, isAlert } = hasValue ? badge(val, field, isSupply) : { text: '—', isAlert: false };
   const quote = row[quoteField as keyof SignalRow] as string;
 
   // For demand tab, flag moderating spenders gold
@@ -151,7 +154,7 @@ function EvidenceRow({
     ? (isAlert ? '#c9a84c' : '#3a3528')
     : (isAlert ? '#c9a84c' : '#4a7fa5');
 
-  const displayVal = valFmt(val);
+  const displayVal = hasValue ? valFmt(val) : '—';
 
   return (
     <div style={{ padding: '11px 0', borderBottom: '0.5px solid #1a1812' }}>
@@ -222,7 +225,7 @@ export default function SignalsPage({
         const sig = activeTab === 'supply' ? SUPPLY_SIGNALS[0].key : DEMAND_SIGNALS[0].key;
         setActiveSignal(sig);
       })
-      .catch(() => setData({ signals: [], config: [], latestQuarter: '' }));
+      .catch(() => setData({ signals: [], config: [], latestQuarter: '', tfPricingByQuarter: {}, latestTfPrice: null }));
   }, []);
 
   // Reset active signal when tab changes
@@ -480,6 +483,20 @@ export default function SignalsPage({
               </div>
             );
           })}
+          {isSupply && (() => {
+            const tfVal = data.tfPricingByQuarter?.[latestQ] ?? null;
+            if (tfVal === null) return null;
+            const tfColor = tfVal > 0 ? '#5dcaa5' : '#c9a84c';
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 5, marginTop: 4, borderTop: '0.5px solid #1a1812' }}>
+                <div>
+                  <span style={{ fontSize: 11, color: '#9a8e78' }}>NAND Contract Price</span>
+                  <span style={{ display: 'block', fontSize: 9, color: '#555', letterSpacing: '0.04em' }}>TrendForce</span>
+                </div>
+                <span style={{ fontSize: 10, color: tfColor }}>{tfVal > 0 ? '+' : ''}{tfVal.toFixed(1)}%</span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Evidence panel */}
