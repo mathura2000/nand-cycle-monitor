@@ -115,20 +115,51 @@ interface ChartTooltipProps {
   narratives: Record<string, string>;
 }
 
+function parseBold(text: string): React.ReactNode {
+  const parts = text.split(/\*\*(.+?)\*\*/);
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part}</span>
+      : part
+  );
+}
+
 function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
   const narrative = narratives[label];
+  const bullets = narrative
+    ? narrative.trim().replace(/\.$/, '').split(/\.\s+/).filter(Boolean)
+    : [];
   const labelMap: Record<string, string> = {
     leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply',
     demand: 'Demand', inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
   };
   return (
-    <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 260 }}>
-      <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 6 }}>{label}</div>
+    <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 290 }}>
+      <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 8 }}>{label}</div>
+      {bullets.length > 0 && (
+        <>
+          <div style={{ marginBottom: 6 }}>
+            {bullets.map((b, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                <span style={{ color: '#4a4030', fontSize: 11, flexShrink: 0, marginTop: 1 }}>·</span>
+                <span style={{ fontSize: 11, color: '#a09070', lineHeight: 1.5 }}>{parseBold(b)}</span>
+              </div>
+            ))}
+          </div>
+          <a
+            href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
+            style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', display: 'block', marginBottom: 8 }}
+          >
+            drill in →
+          </a>
+        </>
+      )}
+      <div style={{ borderTop: '0.5px solid #1e1c18', marginBottom: 5 }} />
       {payload.map(p => (
-        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 2 }}>
-          <span style={{ fontSize: 10, color: p.color }}>{labelMap[p.name] ?? p.name}</span>
-          <span style={{ fontSize: 10, color: '#9a8e78' }}>
+        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 1 }}>
+          <span style={{ fontSize: 9, color: '#4a4030' }}>{labelMap[p.name] ?? p.name}</span>
+          <span style={{ fontSize: 9, color: '#5a5040' }}>
             {p.name === 'inventoryDays'
               ? `${p.value.toFixed(0)}d`
               : p.name === 'tfPrice'
@@ -137,18 +168,6 @@ function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps)
           </span>
         </div>
       ))}
-      {narrative && (
-        <>
-          <div style={{ borderTop: '0.5px solid #1e1c18', margin: '8px 0 6px' }} />
-          <p style={{ fontSize: 10, color: '#7a6e58', lineHeight: 1.6, margin: '0 0 6px' }}>{narrative}</p>
-          <a
-            href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
-            style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none' }}
-          >
-            drill in →
-          </a>
-        </>
-      )}
     </div>
   );
 }
@@ -175,17 +194,39 @@ function Spark({ values, color }: { values: number[]; color: string }) {
 
 // ── Gap bar ────────────────────────────────────────────────────────────────
 
-function GapBar({ leadingSupply, demand }: { leadingSupply: number | null; demand: number | null }) {
-  const supplyGrowth = leadingSupply ?? 0;
-  const demandGrowth = demand ?? 0;
-  const gapDiff = demandGrowth - supplyGrowth; // positive = demand outpacing = safer
-  const position = Math.max(5, Math.min(95, 50 + gapDiff * 1.5));
+function GapBar({
+  supplyByQuarter,
+  demandByQuarter,
+  gapQ,
+}: {
+  supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>;
+  demandByQuarter: Record<string, number | null>;
+  gapQ: string;
+}) {
+  const allGaps = Object.keys(supplyByQuarter)
+    .map(q => {
+      const s = supplyByQuarter[q]?.leading;
+      const d = demandByQuarter[q];
+      return s != null && d != null ? d - s : null;
+    })
+    .filter((v): v is number => v !== null);
+
+  const leadingSupply = supplyByQuarter[gapQ]?.leading ?? null;
+  const demand = demandByQuarter[gapQ] ?? null;
+  const gapDiff = leadingSupply != null && demand != null ? demand - leadingSupply : null;
+
+  let position = 50;
+  if (gapDiff !== null && allGaps.length > 1) {
+    const minGap = Math.min(...allGaps);
+    const maxGap = Math.max(...allGaps);
+    const range = maxGap - minGap || 1;
+    position = Math.round(5 + ((gapDiff - minGap) / range) * 90);
+  }
 
   let statusText = 'No data';
-  if (leadingSupply !== null) {
-    if (gapDiff > 5) statusText = 'Demand absorbing supply · safe';
-    else if (gapDiff > -5) statusText = 'Balanced · monitor';
-    else if (gapDiff > -15) statusText = 'Stable · watch supply';
+  if (gapDiff !== null) {
+    if (position > 66) statusText = 'Demand absorbing supply · safe';
+    else if (position > 33) statusText = 'Balanced · monitor';
     else statusText = 'Supply pressure building · act';
   }
 
@@ -223,6 +264,7 @@ export default function OverviewPage() {
   const [mounted, setMounted] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showTfPrice, setShowTfPrice] = useState(false);
+  const [hoveredQuarter, setHoveredQuarter] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -273,8 +315,7 @@ export default function OverviewPage() {
     tfPrice: data.tfPricingByQuarter?.[q] ?? null,
   }));
 
-  const latestLeadingSupply = data.supplyByQuarter[latestQ]?.leading ?? null;
-  const latestDemand = data.demandByQuarter[latestQ] ?? null;
+  const gapQ = hoveredQuarter ?? latestQ;
   const latestTfPrice = data.latestTfPrice ?? null;
 
   // ── Sparkline series (per-quarter averages) ──────────────────────────────
@@ -396,7 +437,12 @@ export default function OverviewPage() {
 
         {mounted ? (
           <ResponsiveContainer width="100%" height={190}>
-            <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <LineChart
+              data={chartData}
+              margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+              onMouseMove={(e) => { if (e.activeLabel) setHoveredQuarter(e.activeLabel as string); }}
+              onMouseLeave={() => setHoveredQuarter(null)}
+            >
               <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 dataKey="quarter"
@@ -481,7 +527,7 @@ export default function OverviewPage() {
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
-      <GapBar leadingSupply={latestLeadingSupply} demand={latestDemand} />
+      <GapBar supplyByQuarter={data.supplyByQuarter} demandByQuarter={data.demandByQuarter} gapQ={gapQ} />
 
       {/* ── Signal panels ───────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>

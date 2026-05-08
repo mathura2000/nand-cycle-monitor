@@ -91,7 +91,7 @@ function computeSupplyByQuarter(signals: SigRow[]): Record<string, { leading: nu
         const avgCapex = capexRows.reduce((s, r) => s + Number(r.capex_pct), 0) / capexRows.length;
         capexContrib = winsorize(avgCapex, -60, 60);
       }
-      leading = Math.round((nodePct * 0.8 + capexContrib * 0.2) * 10) / 10;
+      leading = Math.round((nodePct * 0.6 + capexContrib * 0.4) * 10) / 10;
     }
 
     let trailing: number | null = null;

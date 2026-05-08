@@ -33,11 +33,9 @@ interface ApiData {
 // ── Signal definitions ─────────────────────────────────────────────────────
 
 const SUPPLY_SIGNALS = [
-  { key: 'capex',     label: 'CapEx trending',    field: 'capex_pct',         quoteField: 'capex_quote',         valFmt: (v: number) => `+${v.toFixed(0)}% YoY` },
-  { key: 'node',      label: 'Node transitions',  field: 'node_transition_score', quoteField: 'node_transition_note', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
-  { key: 'inventory', label: 'Inventory days',    field: 'inventory_days',    quoteField: 'inventory_quote',     valFmt: (v: number) => `${v.toFixed(0)} days` },
-  { key: 'tone',      label: 'Mgmt tone',         field: 'mgmt_tone_score',   quoteField: 'mgmt_tone_quote',     valFmt: (v: number) => `${v.toFixed(1)} / 5` },
-  { key: 'asp',       label: 'ASP trajectory',    field: 'asp_change_pct',    quoteField: 'asp_quote',           valFmt: (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}% QoQ` },
+  { key: 'capex',     label: 'CapEx trending',   field: 'capex_pct',             quoteField: 'capex_quote',          valFmt: (v: number) => `+${v.toFixed(0)}% YoY` },
+  { key: 'node',      label: 'Node transitions', field: 'node_transition_score',  quoteField: 'node_transition_note', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
+  { key: 'inventory', label: 'Inventory days',   field: 'inventory_days',         quoteField: 'inventory_quote',      valFmt: (v: number) => `${v.toFixed(0)} days` },
 ] as const;
 
 const DEMAND_SIGNALS = [
@@ -45,6 +43,14 @@ const DEMAND_SIGNALS = [
   { key: 'storage', label: 'Storage hunger',    field: 'mgmt_tone_score', quoteField: 'mgmt_tone_quote', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
   { key: 'ai',      label: 'AI demand',         field: 'mgmt_tone_score', quoteField: 'mgmt_tone_quote', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
 ] as const;
+
+const NODE_SCORE_LABELS: Record<number, string> = {
+  1: 'Cutting capacity',
+  2: 'Restraining supply',
+  3: 'Maintaining',
+  4: 'Expanding aggressively',
+  5: 'Maximum ramp',
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -56,7 +62,6 @@ function quarterIndex(q: string): number {
 
 function num(s: string): number { return parseFloat(s) || 0; }
 
-// Determine badge for a value and whether it's a "supply" context
 function badge(val: number, field: string, isSupply: boolean): { text: string; isAlert: boolean } {
   if (field === 'capex_pct') {
     if (isSupply) {
@@ -67,7 +72,7 @@ function badge(val: number, field: string, isSupply: boolean): { text: string; i
       if (val > 40) return { text: '↑↑ strongest', isAlert: false };
       if (val > 20) return { text: '↑ healthy', isAlert: false };
       if (val > 10) return { text: '→ stable', isAlert: false };
-      return { text: '→ watch', isAlert: true }; // moderating demand
+      return { text: '→ watch', isAlert: true };
     }
   }
   if (field === 'inventory_days') {
@@ -101,15 +106,14 @@ function badge(val: number, field: string, isSupply: boolean): { text: string; i
   return { text: '→', isAlert: false };
 }
 
-// Supply vendor colors (gold family, Samsung brightest)
 const VENDOR_ORDER = ['SSNLF', 'SNDK', 'MU', 'HXSCL'];
 const VENDOR_COLORS = ['#c9a84c', '#b8965a', '#8a7040', '#5a5040'];
 const VENDOR_WIDTHS = [2, 1.5, 1.5, 1.5];
 const VENDOR_OPACITIES = [1, 0.7, 0.6, 0.5];
 
-// Demand hyperscaler colors assigned by rank (blue family, strongest brightest)
+const HYPERSCALER_ORDER = ['AMZN', 'GOOG', 'META', 'MSFT'];
 const DEMAND_BLUE_COLORS = ['#4a7fa5', '#3a6a8a', '#2a5070'];
-const DEMAND_GOLD = '#c9a84c'; // for moderating/lowest spender
+const DEMAND_GOLD = '#c9a84c';
 
 // ── Per-company chart data builder ────────────────────────────────────────
 
@@ -142,23 +146,33 @@ function EvidenceRow({
   isSupply: boolean;
   transcriptUrl: string;
 }) {
+  const isNodeSignal = field === 'node_transition_score';
   const rawVal = row[field as keyof SignalRow];
   const hasValue = rawVal != null && rawVal !== '';
   const val = hasValue ? num(rawVal as string) : 0;
-  const { text: badgeText, isAlert } = hasValue ? badge(val, field, isSupply) : { text: '—', isAlert: false };
-  const quote = row[quoteField as keyof SignalRow] as string;
 
-  // For demand tab, flag moderating spenders gold
+  let badgeText: string;
+  let isAlert: boolean;
+
+  if (!hasValue) {
+    badgeText = '—'; isAlert = false;
+  } else if (isNodeSignal) {
+    const labelKey = Math.round(val);
+    badgeText = NODE_SCORE_LABELS[labelKey] ?? `Score ${val.toFixed(1)}`;
+    isAlert = val >= 4;
+  } else {
+    ({ text: badgeText, isAlert } = badge(val, field, isSupply));
+  }
+
+  const quote = row[quoteField as keyof SignalRow] as string;
   const isModeratingDemand = !isSupply && isAlert;
   const valColor = isSupply
     ? (isAlert ? '#c9a84c' : '#3a3528')
     : (isAlert ? '#c9a84c' : '#4a7fa5');
 
-  const displayVal = hasValue ? valFmt(val) : '—';
-
   return (
     <div style={{ padding: '11px 0', borderBottom: '0.5px solid #1a1812' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: isNodeSignal ? 8 : 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 11, fontWeight: 500, color: '#d4c090', letterSpacing: '0.05em' }}>
             {row.ticker}
@@ -174,19 +188,20 @@ function EvidenceRow({
           </span>
         </div>
         <span style={{ fontSize: 12, fontWeight: 500, color: valColor }}>
-          {displayVal}
+          {hasValue ? valFmt(val) : '—'}
         </span>
       </div>
       {quote && (
         <p style={{
-          fontSize: 10, color: '#7a6e58', lineHeight: 1.6, fontStyle: 'italic',
+          fontSize: 10, color: '#7a6e58', lineHeight: 1.6,
+          fontStyle: isNodeSignal ? 'normal' : 'italic',
           borderLeft: `1.5px solid ${isAlert ? (isSupply ? '#c9a84c33' : '#4a7fa533') : '#1e1c18'}`,
-          paddingLeft: 8, marginBottom: 5,
+          paddingLeft: 8, margin: '0 0 5px',
         }}>
-          "{quote}"
+          {isNodeSignal ? quote : `"${quote}"`}
         </p>
       )}
-      {transcriptUrl && (
+      {transcriptUrl && !isNodeSignal && (
         <a
           href={transcriptUrl}
           target="_blank"
@@ -200,20 +215,136 @@ function EvidenceRow({
   );
 }
 
+// ── Inventory evidence panel ───────────────────────────────────────────────
+
+function InventoryPanel({ signals }: { signals: SignalRow[] }) {
+  const INV_TICKERS = ['MU', 'SNDK'];
+
+  const rows = QUARTER_ORDER.map((q, qi) => {
+    const qRows = signals.filter(r => r.quarter === q && r.type === 'vendor');
+    const vals: Record<string, number | null> = {};
+    for (const t of INV_TICKERS) {
+      const row = qRows.find(r => r.ticker === t);
+      const raw = row?.inventory_days;
+      vals[t] = raw != null && raw !== '' ? parseFloat(raw) : null;
+    }
+
+    // Direction based on MU vs prior quarter
+    let dirText = '—';
+    let dirColor = '#3a3528';
+    let dirBg = '#111009';
+    let dirBorder = '#1e1c18';
+    const muVal = vals['MU'];
+    if (muVal !== null) {
+      const prevQ = QUARTER_ORDER[qi - 1];
+      if (prevQ) {
+        const prevMuRow = signals.find(r => r.quarter === prevQ && r.ticker === 'MU');
+        const prevRaw = prevMuRow?.inventory_days;
+        const prevVal = prevRaw != null && prevRaw !== '' ? parseFloat(prevRaw) : null;
+        if (prevVal !== null) {
+          if (muVal > prevVal + 1) {
+            dirText = '↑ Building'; dirColor = '#c9a84c'; dirBg = '#16120a'; dirBorder = '#c9a84c33';
+          } else if (muVal < prevVal - 1) {
+            dirText = '↓ Drawing down'; dirColor = '#5dcaa5'; dirBg = '#0a1610'; dirBorder = '#5dcaa533';
+          } else {
+            dirText = '→ Stable'; dirColor = '#6a6050'; dirBg = '#111009'; dirBorder = '#1e1c18';
+          }
+        }
+      }
+    } else {
+      dirText = 'No data'; dirColor = '#3a3528';
+    }
+
+    return { q, vals, dirText, dirColor, dirBg, dirBorder };
+  }).filter(r => QUARTER_ORDER.includes(r.q));
+
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: '60px 80px 90px 1fr', gap: 0, marginBottom: 4 }}>
+        {['Quarter', 'MU (days)', 'SNDK (days)', 'Direction'].map(h => (
+          <span key={h} style={{ fontSize: 9, color: '#4a4030', letterSpacing: '0.07em', textTransform: 'uppercase', paddingBottom: 6 }}>
+            {h}
+          </span>
+        ))}
+      </div>
+      {rows.map(({ q, vals, dirText, dirColor, dirBg, dirBorder }) => (
+        <div key={q} style={{ display: 'grid', gridTemplateColumns: '60px 80px 90px 1fr', alignItems: 'center', padding: '8px 0', borderTop: '0.5px solid #1a1812' }}>
+          <span style={{ fontSize: 11, color: '#a09080' }}>{q}</span>
+          <span style={{ fontSize: 11, color: vals['MU'] !== null ? '#d4c090' : '#3a3528' }}>
+            {vals['MU'] !== null ? `${vals['MU']!.toFixed(0)}` : '—'}
+          </span>
+          <span style={{ fontSize: 11, color: vals['SNDK'] !== null ? '#d4c090' : '#3a3528' }}>
+            {vals['SNDK'] !== null ? `${vals['SNDK']!.toFixed(0)}` : '—'}
+          </span>
+          <span style={{
+            fontSize: 9, padding: '2px 7px', borderRadius: 3, width: 'fit-content',
+            background: dirBg, color: dirColor, border: `0.5px solid ${dirBorder}`,
+          }}>
+            {dirText}
+          </span>
+        </div>
+      ))}
+      <p style={{ fontSize: 9, color: '#4a4030', lineHeight: 1.6, marginTop: 14 }}>
+        Inventory days sourced from MU and SNDK earnings reports. Used as industry proxy — MU is the most transparent reporter. HXSCL and SSNLF do not report inventory days.
+      </p>
+    </div>
+  );
+}
+
+// ── TF Pricing evidence panel ──────────────────────────────────────────────
+
+function TfPricingPanel({ tfPricingByQuarter }: { tfPricingByQuarter: Record<string, number | null> }) {
+  const quarters = QUARTER_ORDER.filter(q => tfPricingByQuarter[q] != null);
+  return (
+    <div>
+      {quarters.map(q => {
+        const val = tfPricingByQuarter[q]!;
+        const isPositive = val > 0;
+        const badgeText = val > 30 ? '↑↑ surging' : isPositive ? '↑ rising' : '↓ falling';
+        const accentColor = isPositive ? '#5dcaa5' : '#d4537e';
+        return (
+          <div key={q} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '0.5px solid #1a1812' }}>
+            <span style={{ fontSize: 11, color: '#a09080', width: 60, flexShrink: 0 }}>{q}</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: accentColor, width: 60 }}>
+              {val > 0 ? '+' : ''}{val.toFixed(1)}%
+            </span>
+            <span style={{
+              fontSize: 9, padding: '2px 7px', borderRadius: 3,
+              background: isPositive ? '#0a1610' : '#160a0e',
+              color: accentColor,
+              border: `0.5px solid ${accentColor}33`,
+            }}>
+              {badgeText}
+            </span>
+          </div>
+        );
+      })}
+      <p style={{ fontSize: 9, color: '#4a4030', letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 14 }}>
+        Source: TrendForce press releases
+      </p>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function SignalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; quarter?: string }>;
 }) {
   const params = use(searchParams);
   const activeTab = (params.tab === 'demand' ? 'demand' : 'supply') as 'supply' | 'demand';
+  const paramQuarter = params.quarter
+    ? decodeURIComponent(params.quarter.replace(/\+/g, ' '))
+    : null;
   const router = useRouter();
 
   const [data, setData] = useState<ApiData | null>(null);
   const [mounted, setMounted] = useState(false);
   const [activeSignal, setActiveSignal] = useState<string>('');
+  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [viewingQuarter, setViewingQuarter] = useState<string | null>(paramQuarter);
 
   useEffect(() => {
     setMounted(true);
@@ -221,24 +352,31 @@ export default function SignalsPage({
       .then(r => r.json())
       .then((d: ApiData) => {
         setData(d);
-        // default signal = first in current tab
         const sig = activeTab === 'supply' ? SUPPLY_SIGNALS[0].key : DEMAND_SIGNALS[0].key;
         setActiveSignal(sig);
       })
       .catch(() => setData({ signals: [], config: [], latestQuarter: '', tfPricingByQuarter: {}, latestTfPrice: null }));
   }, []);
 
-  // Reset active signal when tab changes
   useEffect(() => {
     const sig = activeTab === 'supply' ? SUPPLY_SIGNALS[0].key : DEMAND_SIGNALS[0].key;
     setActiveSignal(sig);
+    setSelectedCompany('all');
   }, [activeTab]);
 
+  useEffect(() => {
+    setViewingQuarter(paramQuarter);
+  }, [paramQuarter]);
+
   const switchTab = (tab: 'supply' | 'demand') => {
-    router.push(`/signals?tab=${tab}`);
+    const q = viewingQuarter ? `&quarter=${viewingQuarter.replace(/ /g, '+')}` : '';
+    router.push(`/signals?tab=${tab}${q}`);
   };
 
-  // ── Empty / loading states ─────────────────────────────────────────────
+  const dismissQuarter = () => {
+    setViewingQuarter(null);
+    router.push(`/signals?tab=${activeTab}`);
+  };
 
   if (!data) {
     return (
@@ -248,69 +386,61 @@ export default function SignalsPage({
 
   const { signals, config } = data;
 
-  // Build transcript URL lookup from config
   const urlByTicker: Record<string, string> = {};
   for (const row of config) {
     if (row.ticker && row.default_url) urlByTicker[row.ticker] = row.default_url;
   }
-  // Also use transcript_url from signals rows if available
   for (const row of signals) {
     if (row.ticker && row.transcript_url) urlByTicker[row.ticker] = row.transcript_url;
   }
 
   const quarters = [...new Set(signals.map(r => r.quarter))].sort((a, b) => quarterIndex(a) - quarterIndex(b));
   const latestQ = quarters.at(-1) ?? '';
-  const latestRows = signals.filter(r => r.quarter === latestQ);
-
-  // ── Determine companies to chart ─────────────────────────────────────
+  const activeQ = viewingQuarter ?? latestQ;
+  const activeRows = signals.filter(r => r.quarter === activeQ);
 
   const isSupply = activeTab === 'supply';
   const typeFilter = isSupply ? 'vendor' : 'hyperscaler';
-
-  // All tickers of the active type across all quarters
   const typeTickers = [...new Set(signals.filter(r => r.type === typeFilter).map(r => r.ticker))];
 
-  // For supply: Samsung first (gold hero), fixed order
   let orderedTickers: string[];
   if (isSupply) {
     orderedTickers = VENDOR_ORDER.filter(t => typeTickers.includes(t));
-    // append any additional vendors not in the fixed order
     typeTickers.forEach(t => { if (!orderedTickers.includes(t)) orderedTickers.push(t); });
   } else {
-    // Demand: sort by latest capex_pct descending
-    const latest = latestRows.filter(r => r.type === 'hyperscaler');
-    orderedTickers = [...typeTickers].sort((a, b) => {
-      const aRow = latest.find(r => r.ticker === a);
-      const bRow = latest.find(r => r.ticker === b);
-      return num(bRow?.capex_pct ?? '0') - num(aRow?.capex_pct ?? '0');
-    });
+    orderedTickers = HYPERSCALER_ORDER.filter(t => typeTickers.includes(t));
+    typeTickers.forEach(t => { if (!orderedTickers.includes(t)) orderedTickers.push(t); });
   }
-
-  // ── Chart data ────────────────────────────────────────────────────────
 
   const chartField: keyof SignalRow = isSupply ? 'bit_growth_pct' : 'capex_pct';
   const companyChartData = buildCompanyChart(signals, quarters, chartField, orderedTickers);
 
-  // ── Signals list and evidence ─────────────────────────────────────────
-
   const signalDefs = isSupply ? SUPPLY_SIGNALS : DEMAND_SIGNALS;
-  const activeSigDef = signalDefs.find(s => s.key === activeSignal) ?? signalDefs[0];
+  const isTfSignal = activeSignal === 'tf';
+  const isInventorySignal = activeSignal === 'inventory';
+  const activeSigDef = isTfSignal ? null : (signalDefs.find(s => s.key === activeSignal) ?? signalDefs[0]);
 
-  // Evidence: latest-quarter rows for this type, sorted by signal value desc
-  const evidenceRows = latestRows
+  let evidenceRows = activeRows
     .filter(r => r.type === typeFilter)
-    .sort((a, b) => {
-      const field = activeSigDef.field as keyof SignalRow;
-      return num(b[field] as string) - num(a[field] as string);
-    });
+    .filter(r => selectedCompany === 'all' || r.ticker === selectedCompany);
 
-  // ── Signal list direction for display ─────────────────────────────────
+  if (activeSigDef) {
+    const field = activeSigDef.field as keyof SignalRow;
+    evidenceRows = evidenceRows.sort((a, b) => num(b[field] as string) - num(a[field] as string));
+  }
+
+  // For node signal: sort by score desc
+  if (activeSigDef?.key === 'node') {
+    evidenceRows = [...evidenceRows].sort((a, b) =>
+      num(b.node_transition_score) - num(a.node_transition_score)
+    );
+  }
 
   function sigDir(key: string): string {
     const allSigs = [...SUPPLY_SIGNALS, ...DEMAND_SIGNALS];
     const def = allSigs.find(s => s.key === key);
     if (!def) return '';
-    const rows = latestRows.filter(r => r.type === typeFilter);
+    const rows = activeRows.filter(r => r.type === typeFilter);
     if (rows.length === 0) return '—';
     const field = def.field as keyof SignalRow;
     const validRows = rows.filter(r => r[field] != null && r[field] !== '');
@@ -327,11 +457,8 @@ export default function SignalsPage({
     return '#3a3528';
   }
 
-  // ── Line colors ──────────────────────────────────────────────────────
-
   function lineColor(ticker: string, idx: number): string {
     if (isSupply) return VENDOR_COLORS[idx] ?? '#5a5040';
-    // Demand: flag the lowest/worst spender gold
     if (idx === orderedTickers.length - 1 && orderedTickers.length >= 2) return DEMAND_GOLD;
     return DEMAND_BLUE_COLORS[idx] ?? '#2a5070';
   }
@@ -339,12 +466,11 @@ export default function SignalsPage({
     if (isSupply) return VENDOR_WIDTHS[idx] ?? 1.5;
     return idx === 0 ? 2 : 1.5;
   }
-  function lineOpacity(idx: number): number {
+  function lineOpacity(ticker: string, idx: number): number {
+    if (selectedCompany !== 'all') return ticker === selectedCompany ? 1 : 0.2;
     if (isSupply) return VENDOR_OPACITIES[idx] ?? 0.5;
     return idx === 0 ? 1 : idx === 1 ? 0.85 : 0.7;
   }
-
-  // ── Render ───────────────────────────────────────────────────────────
 
   const tabBase: React.CSSProperties = {
     fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
@@ -358,16 +484,15 @@ export default function SignalsPage({
     background: tab === 'supply' ? '#16120a' : '#0a0f16',
   });
 
-  const chartLabel = isSupply
-    ? 'Per-vendor bit growth % YoY'
-    : 'Per-hyperscaler CapEx % YoY';
-  const chartTitle = isSupply
-    ? 'Vendor supply growth — individual lines'
-    : 'Hyperscaler demand — individual lines';
+  const chartLabel = isSupply ? 'Per-vendor bit growth % YoY' : 'Per-hyperscaler CapEx % YoY';
+  const chartTitle = isSupply ? 'Vendor supply growth — individual lines' : 'Hyperscaler demand — individual lines';
+  const allLabel = isSupply ? 'All vendors' : 'All companies';
+  const evidencePanelTitle = isTfSignal
+    ? 'NAND Contract Price — all quarters'
+    : `${activeSigDef?.label ?? ''} — strongest first`;
 
   return (
     <div>
-      {/* Back link */}
       <a
         href="/"
         style={{
@@ -379,21 +504,31 @@ export default function SignalsPage({
         ← Overview
       </a>
 
-      {/* Tabs */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
-        <button
-          style={activeTab === 'supply' ? tabActive('supply') : tabBase}
-          onClick={() => switchTab('supply')}
-        >
+        <button style={activeTab === 'supply' ? tabActive('supply') : tabBase} onClick={() => switchTab('supply')}>
           Supply pressure signals
         </button>
-        <button
-          style={activeTab === 'demand' ? tabActive('demand') : tabBase}
-          onClick={() => switchTab('demand')}
-        >
+        <button style={activeTab === 'demand' ? tabActive('demand') : tabBase} onClick={() => switchTab('demand')}>
           Demand health signals
         </button>
       </div>
+
+      {viewingQuarter && viewingQuarter !== latestQ && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 10, color: '#7a6e58', marginBottom: 10,
+          background: '#111009', border: '0.5px solid #2a2518',
+          borderRadius: 5, padding: '5px 10px', width: 'fit-content',
+        }}>
+          <span>Viewing {viewingQuarter} · not latest</span>
+          <button
+            onClick={dismissQuarter}
+            style={{ fontSize: 12, color: '#5a5040', background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Chart card */}
       <div style={{
@@ -439,7 +574,7 @@ export default function SignalsPage({
                   dataKey={ticker}
                   stroke={lineColor(ticker, idx)}
                   strokeWidth={lineWidth(idx)}
-                  strokeOpacity={lineOpacity(idx)}
+                  strokeOpacity={lineOpacity(ticker, idx)}
                   dot={false}
                   activeDot={{ r: 3, fill: lineColor(ticker, idx) }}
                   connectNulls
@@ -474,26 +609,35 @@ export default function SignalsPage({
                   border: isActive ? `0.5px solid ${accentColor}33` : '0.5px solid transparent',
                 }}
               >
-                <span style={{ fontSize: 11, color: isActive ? accentColor : '#9a8e78' }}>
-                  {sig.label}
-                </span>
-                <span style={{ fontSize: 10, color: sigDirColor(sig.key) }}>
-                  {sigDir(sig.key)}
-                </span>
+                <span style={{ fontSize: 11, color: isActive ? accentColor : '#9a8e78' }}>{sig.label}</span>
+                <span style={{ fontSize: 10, color: sigDirColor(sig.key) }}>{sigDir(sig.key)}</span>
               </div>
             );
           })}
           {isSupply && (() => {
-            const tfVal = data.tfPricingByQuarter?.[latestQ] ?? null;
-            if (tfVal === null) return null;
-            const tfColor = tfVal > 0 ? '#5dcaa5' : '#c9a84c';
+            const tfVal = data.tfPricingByQuarter?.[activeQ] ?? null;
+            const isActive = activeSignal === 'tf';
+            const tfColor = tfVal !== null ? (tfVal > 0 ? '#5dcaa5' : '#d4537e') : '#6a6050';
             return (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 5, marginTop: 4, borderTop: '0.5px solid #1a1812' }}>
+              <div
+                onClick={() => setActiveSignal('tf')}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 10px', borderRadius: 5, marginTop: 4, cursor: 'pointer',
+                  background: isActive ? '#0a1610' : 'transparent',
+                  borderTop: '0.5px solid #1a1812',
+                  borderRight: isActive ? '0.5px solid #5dcaa533' : '0.5px solid transparent',
+                  borderBottom: isActive ? '0.5px solid #5dcaa533' : '0.5px solid transparent',
+                  borderLeft: isActive ? '0.5px solid #5dcaa533' : '0.5px solid transparent',
+                }}
+              >
                 <div>
-                  <span style={{ fontSize: 11, color: '#9a8e78' }}>NAND Contract Price</span>
+                  <span style={{ fontSize: 11, color: isActive ? '#5dcaa5' : '#9a8e78' }}>NAND Contract Price</span>
                   <span style={{ display: 'block', fontSize: 9, color: '#555', letterSpacing: '0.04em' }}>TrendForce</span>
                 </div>
-                <span style={{ fontSize: 10, color: tfColor }}>{tfVal > 0 ? '+' : ''}{tfVal.toFixed(1)}%</span>
+                {tfVal !== null && (
+                  <span style={{ fontSize: 10, color: tfColor }}>{tfVal > 0 ? '+' : ''}{tfVal.toFixed(1)}%</span>
+                )}
               </div>
             );
           })()}
@@ -501,11 +645,31 @@ export default function SignalsPage({
 
         {/* Evidence panel */}
         <div style={{ background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10, padding: '16px 18px' }}>
-          <div style={{ fontSize: 9, color: '#8a7e68', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>
-            {activeSigDef.label} — strongest first
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div style={{ fontSize: 9, color: '#8a7e68', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+              {evidencePanelTitle}
+            </div>
+            <select
+              value={selectedCompany}
+              onChange={e => setSelectedCompany(e.target.value)}
+              style={{
+                fontSize: 10, color: '#7a6e58', background: '#111009',
+                border: '0.5px solid #2a2820', borderRadius: 4,
+                padding: '3px 8px', cursor: 'pointer', outline: 'none',
+              }}
+            >
+              <option value="all">{allLabel}</option>
+              {orderedTickers.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
           </div>
 
-          {evidenceRows.length === 0 ? (
+          {isTfSignal ? (
+            <TfPricingPanel tfPricingByQuarter={data.tfPricingByQuarter} />
+          ) : isInventorySignal ? (
+            <InventoryPanel signals={signals} />
+          ) : evidenceRows.length === 0 ? (
             <div style={{ color: '#3a3528', fontSize: 11, paddingTop: 20, textAlign: 'center' }}>
               No data ingested yet —{' '}
               <a href="/ingest" style={{ color: '#7a6e54', textDecoration: 'underline' }}>go to Ingest</a>
@@ -515,9 +679,9 @@ export default function SignalsPage({
               <EvidenceRow
                 key={row.ticker}
                 row={row}
-                field={activeSigDef.field}
-                quoteField={activeSigDef.quoteField}
-                valFmt={activeSigDef.valFmt}
+                field={activeSigDef!.field}
+                quoteField={activeSigDef!.quoteField}
+                valFmt={activeSigDef!.valFmt}
                 isSupply={isSupply}
                 transcriptUrl={urlByTicker[row.ticker] ?? ''}
               />
