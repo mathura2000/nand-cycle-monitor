@@ -26,6 +26,7 @@ interface ApiData {
   inventoryByQuarter: Record<string, number | null>;
   tfPricingByQuarter: Record<string, number | null>;
   latestTfPrice: number | null;
+  narratives: Record<string, string>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -175,13 +176,14 @@ export default function OverviewPage() {
   const [mounted, setMounted] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showTfPrice, setShowTfPrice] = useState(false);
+  const [hoveredQuarter, setHoveredQuarter] = useState('');
 
   useEffect(() => {
     setMounted(true);
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
   }, []);
 
   if (!data) {
@@ -348,7 +350,9 @@ export default function OverviewPage() {
 
         {mounted ? (
           <ResponsiveContainer width="100%" height={190}>
-            <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+              onMouseMove={(e: { activeLabel?: string }) => { if (e.activeLabel) setHoveredQuarter(e.activeLabel); }}
+            >
               <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 dataKey="quarter"
@@ -437,6 +441,25 @@ export default function OverviewPage() {
         ) : (
           <div style={{ height: 190 }} />
         )}
+        {(() => {
+          const nq = hoveredQuarter || latestQ;
+          const text = data.narratives?.[nq];
+          if (!text) return null;
+          return (
+            <div style={{ marginTop: 10, padding: '10px 14px', background: '#0d0b07', border: '0.5px solid #2a2518', borderRadius: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                <p style={{ fontSize: 11, color: '#9a8e78', lineHeight: 1.6, margin: 0, flex: 1 }}>{text}</p>
+                <a
+                  href={`/signals?quarter=${nq.replace(' ', '+')}&tab=supply`}
+                  style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                  drill in →
+                </a>
+              </div>
+              <div style={{ fontSize: 9, color: '#555', marginTop: 4, letterSpacing: '0.06em' }}>{nq}</div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
