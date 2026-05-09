@@ -523,7 +523,7 @@ export default function OverviewPage() {
         </div>
 
         {mounted ? (
-          <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={320}>
             <LineChart
               data={chartData}
               margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
@@ -645,7 +645,7 @@ export default function OverviewPage() {
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div style={{ height: 260 }} />
+          <div style={{ height: 320 }} />
         )}
       </div>
 
