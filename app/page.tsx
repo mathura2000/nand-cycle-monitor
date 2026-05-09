@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -543,7 +543,7 @@ export default function OverviewPage() {
                 axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
-                label={{ value: chartView === 'gap' ? '% Δ from Q2 2024' : 'YoY %', angle: -90, position: 'insideLeft', offset: 12, style: { fontSize: 7, fill: '#4a4030', fontFamily: 'var(--font-sans)' } }}
+                label={{ value: chartView === 'gap' ? '% Δ from Q2 2024' : 'Year-over-year % (supply vs demand growth)', angle: -90, position: 'insideLeft', offset: 12, style: { fontSize: 7, fill: '#4a4030', fontFamily: 'var(--font-sans)' } }}
                 width={52}
               />
               {showInventory && (
@@ -623,6 +623,11 @@ export default function OverviewPage() {
                     stroke="#4a7fa5" strokeWidth={2}
                     dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                     connectNulls
+                  />
+                  <ReferenceLine
+                    yAxisId="y" y={0}
+                    stroke="#444" strokeDasharray="3 3"
+                    label={{ value: '0%', position: 'insideLeft', style: { fontSize: 7, fill: '#555', fontFamily: 'var(--font-sans)' } }}
                   />
                 </>
               )}
