@@ -23,6 +23,7 @@ interface ApiData {
   sourcesCount: number;
   supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>;
   demandByQuarter: Record<string, number | null>;
+  demandIndexByQuarter: Record<string, number | null>;
   inventoryByQuarter: Record<string, number | null>;
   storageByQuarter: Record<string, number | null>;
   urgencyByQuarter: Record<string, number | null>;
@@ -134,7 +135,7 @@ function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps)
     : [];
   const labelMap: Record<string, string> = {
     leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply',
-    demand: 'Demand', inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
+    demand: 'Demand (index)', inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
     aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
   };
   return (
@@ -276,7 +277,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
   }, []);
 
   if (!data) {
@@ -308,17 +309,23 @@ export default function OverviewPage() {
   // ── Hero chart data ──────────────────────────────────────────────────────
   const allChartQuarters = [...new Set([
     ...Object.keys(data.supplyByQuarter),
-    ...Object.keys(data.demandByQuarter),
+    ...Object.keys(data.demandIndexByQuarter ?? data.demandByQuarter),
   ])].sort((a, b) => quarterIndex(a) - quarterIndex(b));
 
   const normalizeScore = (score: number | null): number | null =>
     score != null ? Math.round((score - 1) * 25 * 10) / 10 : null;
 
+  // Normalize demand index to growth-from-base: (index - 100), so Q2 2024 = 0%
+  const demandNormByQuarter: Record<string, number | null> = {};
+  for (const [q, idx] of Object.entries(data.demandIndexByQuarter ?? {})) {
+    demandNormByQuarter[q] = idx != null ? Math.round((idx - 100) * 10) / 10 : null;
+  }
+
   const chartData = allChartQuarters.map(q => ({
     quarter: q,
     leadingSupply: data.supplyByQuarter[q]?.leading ?? null,
     trailingSupply: data.supplyByQuarter[q]?.trailing ?? null,
-    demand: data.demandByQuarter[q] ?? null,
+    demand: demandNormByQuarter[q] ?? null,
     inventoryDays: data.inventoryByQuarter?.[q] ?? null,
     tfPrice: data.tfPricingByQuarter?.[q] ?? null,
     aiUrgency: normalizeScore(data.urgencyByQuarter?.[q] ?? null),
@@ -406,7 +413,7 @@ export default function OverviewPage() {
         <div style={S.chartLabel as React.CSSProperties}>Primary signal</div>
         <div style={S.chartTitle as React.CSSProperties}>Supply vs Demand Growth</div>
         <div style={S.chartSub as React.CSSProperties}>
-          Leading supply (node transitions + vendor capex) vs hyperscaler CapEx YoY · {quarters.length} quarter{quarters.length !== 1 ? 's' : ''}
+          Leading supply (node transitions + vendor capex) vs hyperscaler CapEx index (Q2 2024 = 0) · {quarters.length} quarter{quarters.length !== 1 ? 's' : ''}
         </div>
         <div style={{ display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap' }}>
           <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
@@ -437,7 +444,7 @@ export default function OverviewPage() {
           </div>
           <div style={S.legItem as React.CSSProperties}>
             <div style={{ ...S.legDot, background: '#4a7fa5' }} />
-            Demand (hyperscaler CapEx %)
+            Demand (index, Q2 2024=0)
           </div>
           {showAiUrgency && (
             <div style={S.legItem as React.CSSProperties}>
@@ -573,7 +580,7 @@ export default function OverviewPage() {
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
-      <GapBar supplyByQuarter={data.supplyByQuarter} demandByQuarter={data.demandByQuarter} gapQ={gapQ} />
+      <GapBar supplyByQuarter={data.supplyByQuarter} demandByQuarter={demandNormByQuarter} gapQ={gapQ} />
 
       {/* ── Signal panels ───────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>
