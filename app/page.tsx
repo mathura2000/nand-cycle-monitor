@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -523,7 +523,7 @@ export default function OverviewPage() {
         </div>
 
         {mounted ? (
-          <ResponsiveContainer width="100%" height={190}>
+          <ResponsiveContainer width="100%" height={260}>
             <LineChart
               data={chartData}
               margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
@@ -624,11 +624,6 @@ export default function OverviewPage() {
                     dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                     connectNulls
                   />
-                  <ReferenceLine
-                    yAxisId="y" y={0}
-                    stroke="#444" strokeDasharray="3 3"
-                    label={{ value: '0%', position: 'insideLeft', style: { fontSize: 7, fill: '#555', fontFamily: 'var(--font-sans)' } }}
-                  />
                 </>
               )}
               {showInventory && (
@@ -650,7 +645,7 @@ export default function OverviewPage() {
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div style={{ height: 190 }} />
+          <div style={{ height: 260 }} />
         )}
       </div>
 
