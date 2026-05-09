@@ -148,6 +148,41 @@ function computeUrgencyByQuarter(signals: SigRow[]): Record<string, number | nul
   return result;
 }
 
+function computeDemandIndexByQuarter(signals: SigRow[]): Record<string, number | null> {
+  const hyperscalers = signals.filter(r => r.type === 'hyperscaler');
+  const baseActuals: Record<string, number> = {};
+  for (const ticker of ['AMZN', 'GOOG', 'META', 'MSFT']) {
+    const base = hyperscalers.find(s => s.ticker === ticker && s.quarter === 'Q2 2024');
+    if (base?.capex_actual_usd) baseActuals[ticker] = Number(base.capex_actual_usd);
+  }
+  const result: Record<string, number | null> = {};
+  for (const q of QUARTER_ORDER) {
+    const rows = hyperscalers.filter(s =>
+      s.quarter === q && s.capex_actual_usd && baseActuals[s.ticker as string]
+    );
+    if (rows.length === 0) { result[q] = null; continue; }
+    const avgIndex = rows.reduce((sum, r) =>
+      sum + (Number(r.capex_actual_usd) / baseActuals[r.ticker as string]) * 100, 0) / rows.length;
+    result[q] = Math.round(avgIndex * 10) / 10;
+  }
+  return result;
+}
+
+// Indexes the pre-computed leading supply value relative to Q2 2024.
+// Returns (value - Q2_2024_value) for each quarter, so Q2 2024 = 0.
+function computeSupplyIndexByQuarter(
+  supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>
+): Record<string, number | null> {
+  const base = supplyByQuarter['Q2 2024']?.leading;
+  if (base == null) return {};
+  const result: Record<string, number | null> = {};
+  for (const q of QUARTER_ORDER) {
+    const v = supplyByQuarter[q]?.leading;
+    result[q] = v != null ? Math.round((v - base) * 10) / 10 : null;
+  }
+  return result;
+}
+
 function computeInventoryByQuarter(signals: SigRow[]): Record<string, number | null> {
   const vendors = signals.filter(r => r.type === 'vendor');
   const quarters = [...new Set(vendors.map(r => r.quarter as string))];
@@ -210,7 +245,9 @@ export async function GET(req: NextRequest) {
       const lastIngested = dates.at(-1) ?? '';
 
       const supplyByQuarter = computeSupplyByQuarter(signals);
+      const supplyIndexByQuarter = computeSupplyIndexByQuarter(supplyByQuarter);
       const demandByQuarter = computeDemandByQuarter(signals);
+      const demandIndexByQuarter = computeDemandIndexByQuarter(signals);
       const inventoryByQuarter = computeInventoryByQuarter(signals);
       const storageByQuarter = computeStorageByQuarter(signals);
       const urgencyByQuarter = computeUrgencyByQuarter(signals);
@@ -223,10 +260,10 @@ export async function GET(req: NextRequest) {
       const sortedPricingQs = Object.keys(tfPricingByQuarter).sort((a, b) => quarterIndex(a) - quarterIndex(b));
       const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, demandByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives });
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives });
     } catch (error) {
       console.error('Supabase data error:', error);
-      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null });
+      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null });
     }
   }
 
