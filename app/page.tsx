@@ -24,6 +24,8 @@ interface ApiData {
   supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>;
   demandByQuarter: Record<string, number | null>;
   inventoryByQuarter: Record<string, number | null>;
+  storageByQuarter: Record<string, number | null>;
+  urgencyByQuarter: Record<string, number | null>;
   tfPricingByQuarter: Record<string, number | null>;
   latestTfPrice: number | null;
   narratives: Record<string, string>;
@@ -133,6 +135,7 @@ function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps)
   const labelMap: Record<string, string> = {
     leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply',
     demand: 'Demand', inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
+    aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
   };
   return (
     <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 290 }}>
@@ -264,6 +267,8 @@ export default function OverviewPage() {
   const [mounted, setMounted] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showTfPrice, setShowTfPrice] = useState(false);
+  const [showAiUrgency, setShowAiUrgency] = useState(false);
+  const [showStorageHunger, setShowStorageHunger] = useState(false);
   const [hoveredQuarter, setHoveredQuarter] = useState<string | null>(null);
 
   useEffect(() => {
@@ -271,7 +276,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, demandByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
   }, []);
 
   if (!data) {
@@ -306,6 +311,9 @@ export default function OverviewPage() {
     ...Object.keys(data.demandByQuarter),
   ])].sort((a, b) => quarterIndex(a) - quarterIndex(b));
 
+  const normalizeScore = (score: number | null): number | null =>
+    score != null ? Math.round((score - 1) * 25 * 10) / 10 : null;
+
   const chartData = allChartQuarters.map(q => ({
     quarter: q,
     leadingSupply: data.supplyByQuarter[q]?.leading ?? null,
@@ -313,6 +321,8 @@ export default function OverviewPage() {
     demand: data.demandByQuarter[q] ?? null,
     inventoryDays: data.inventoryByQuarter?.[q] ?? null,
     tfPrice: data.tfPricingByQuarter?.[q] ?? null,
+    aiUrgency: normalizeScore(data.urgencyByQuarter?.[q] ?? null),
+    storageHunger: normalizeScore(data.storageByQuarter?.[q] ?? null),
   }));
 
   const gapQ = hoveredQuarter ?? latestQ;
@@ -398,7 +408,7 @@ export default function OverviewPage() {
         <div style={S.chartSub as React.CSSProperties}>
           Leading supply (node transitions + vendor capex) vs hyperscaler CapEx YoY · {quarters.length} quarter{quarters.length !== 1 ? 's' : ''}
         </div>
-        <div style={{ display: 'flex', gap: 14, marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap' }}>
           <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
             <input type="checkbox" checked={showInventory} onChange={e => setShowInventory(e.target.checked)} style={{ accentColor: '#d4537e' }} />
             Inventory Days
@@ -406,6 +416,14 @@ export default function OverviewPage() {
           <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
             <input type="checkbox" checked={showTfPrice} onChange={e => setShowTfPrice(e.target.checked)} style={{ accentColor: '#5dcaa5' }} />
             NAND Price QoQ%
+          </label>
+          <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+            <input type="checkbox" checked={showAiUrgency} onChange={e => setShowAiUrgency(e.target.checked)} style={{ accentColor: '#4a7fa5' }} />
+            AI urgency
+          </label>
+          <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+            <input type="checkbox" checked={showStorageHunger} onChange={e => setShowStorageHunger(e.target.checked)} style={{ accentColor: '#c87a30' }} />
+            Storage hunger
           </label>
         </div>
         <div style={S.legend as React.CSSProperties}>
@@ -421,6 +439,18 @@ export default function OverviewPage() {
             <div style={{ ...S.legDot, background: '#4a7fa5' }} />
             Demand (hyperscaler CapEx %)
           </div>
+          {showAiUrgency && (
+            <div style={S.legItem as React.CSSProperties}>
+              <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
+              AI urgency (norm. 0–100%)
+            </div>
+          )}
+          {showStorageHunger && (
+            <div style={S.legItem as React.CSSProperties}>
+              <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c87a30" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
+              Storage hunger (norm. 0–100%)
+            </div>
+          )}
           {showInventory && (
             <div style={S.legItem as React.CSSProperties}>
               <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#d4537e" strokeWidth="1.5" strokeDasharray="3 3" /></svg>
@@ -503,6 +533,22 @@ export default function OverviewPage() {
                 dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                 connectNulls
               />
+              {showAiUrgency && (
+                <Line
+                  dataKey="aiUrgency" name="aiUrgency" yAxisId="y"
+                  stroke="#4a7fa5" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
+                  dot={false} activeDot={{ r: 3, fill: '#4a7fa5' }}
+                  connectNulls
+                />
+              )}
+              {showStorageHunger && (
+                <Line
+                  dataKey="storageHunger" name="storageHunger" yAxisId="y"
+                  stroke="#c87a30" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
+                  dot={false} activeDot={{ r: 3, fill: '#c87a30' }}
+                  connectNulls
+                />
+              )}
               {showInventory && (
                 <Line
                   dataKey="inventoryDays" name="inventoryDays" yAxisId="inv"

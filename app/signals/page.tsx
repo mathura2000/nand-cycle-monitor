@@ -15,6 +15,7 @@ interface SignalRow {
   inventory_days: string; mgmt_tone_score: string; node_transition_score: string; node_transition_note: string;
   bit_growth_quote: string; capex_quote: string; asp_quote: string;
   inventory_quote: string; mgmt_tone_quote: string; transcript_url: string;
+  storage_score: string; storage_quote: string;
 }
 
 interface ConfigRow {
@@ -39,9 +40,9 @@ const SUPPLY_SIGNALS = [
 ] as const;
 
 const DEMAND_SIGNALS = [
-  { key: 'spend',   label: 'Hyperscaler spend', field: 'capex_pct',       quoteField: 'capex_quote',     valFmt: (v: number) => `+${v.toFixed(0)}% YoY` },
-  { key: 'storage', label: 'Storage hunger',    field: 'mgmt_tone_score', quoteField: 'mgmt_tone_quote', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
-  { key: 'ai',      label: 'AI demand',         field: 'mgmt_tone_score', quoteField: 'mgmt_tone_quote', valFmt: (v: number) => `${v.toFixed(1)} / 5` },
+  { key: 'spend',   label: 'Hyperscaler spend', field: 'capex_pct',       quoteField: 'capex_quote',       valFmt: (v: number) => `+${v.toFixed(0)}% YoY` },
+  { key: 'storage', label: 'Storage hunger',    field: 'storage_score',   quoteField: 'storage_quote',     valFmt: (v: number) => `${v.toFixed(1)} / 5` },
+  { key: 'ai',      label: 'AI demand',         field: 'mgmt_tone_score', quoteField: 'mgmt_tone_quote',   valFmt: (v: number) => `${v.toFixed(1)} / 5` },
 ] as const;
 
 const NODE_SCORE_LABELS: Record<number, string> = {
@@ -50,6 +51,22 @@ const NODE_SCORE_LABELS: Record<number, string> = {
   3: 'Maintaining',
   4: 'Expanding aggressively',
   5: 'Maximum ramp',
+};
+
+const STORAGE_SCORE_LABELS: Record<number, string> = {
+  1: 'No storage signal',
+  2: 'Generic infra only',
+  3: 'Storage mentioned',
+  4: 'Explicit purchasing',
+  5: 'Supply constraint',
+};
+
+const URGENCY_SCORE_LABELS: Record<number, string> = {
+  1: 'No urgency',
+  2: 'Comfortable supply',
+  3: 'Demand accelerating',
+  4: 'Capacity pressured',
+  5: 'Hard constraint',
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -80,15 +97,22 @@ function badge(val: number, field: string, isSupply: boolean): { text: string; i
     if (val > 70) return { text: '↑ watch', isAlert: true };
     return { text: '→ stable', isAlert: false };
   }
+  if (field === 'storage_score') {
+    if (val >= 4.5) return { text: '↑↑ constraint', isAlert: false };
+    if (val >= 3.5) return { text: '↑ active', isAlert: false };
+    if (val >= 2.5) return { text: '→ moderate', isAlert: false };
+    return { text: '→ low', isAlert: false };
+  }
   if (field === 'mgmt_tone_score') {
     if (isSupply) {
       if (val >= 4.5) return { text: '↑↑ aggressive', isAlert: true };
       if (val >= 3.5) return { text: '↑ constructive', isAlert: true };
       return { text: '→ neutral', isAlert: false };
     } else {
-      if (val >= 4) return { text: '↑ healthy', isAlert: false };
-      if (val >= 3) return { text: '→ stable', isAlert: false };
-      return { text: '→ cooling', isAlert: true };
+      if (val >= 4.5) return { text: '↑↑ hard constraint', isAlert: false };
+      if (val >= 3.5) return { text: '↑ capacity pressured', isAlert: false };
+      if (val >= 2.5) return { text: '→ accelerating', isAlert: false };
+      return { text: '→ stable', isAlert: false };
     }
   }
   if (field === 'asp_change_pct') {
@@ -326,6 +350,173 @@ function TfPricingPanel({ tfPricingByQuarter }: { tfPricingByQuarter: Record<str
   );
 }
 
+// ── Shared score grid helpers ─────────────────────────────────────────────
+
+function storageScoreStyle(score: number): { bg: string; color: string; border: string } {
+  if (score >= 4.5) return { bg: '#16120a', color: '#c9a84c', border: '#c9a84c33' };
+  if (score >= 3.5) return { bg: '#150e04', color: '#c87a30', border: '#c87a3033' };
+  if (score >= 2.5) return { bg: '#111009', color: '#7a6e58', border: '#1e1c18' };
+  return { bg: '#0e0d0a', color: '#4a4030', border: '#1a1812' };
+}
+
+function urgencyScoreStyle(score: number): { bg: string; color: string; border: string } {
+  if (score >= 4.5) return { bg: '#16120a', color: '#c9a84c', border: '#c9a84c33' };
+  if (score >= 3.5) return { bg: '#0a1610', color: '#5dcaa5', border: '#5dcaa533' };
+  if (score >= 2.5) return { bg: '#111009', color: '#7a6e58', border: '#1e1c18' };
+  return { bg: '#0e0d0a', color: '#4a4030', border: '#1a1812' };
+}
+
+// ── Storage hunger evidence panel ─────────────────────────────────────────
+
+function StoragePanel({ signals, viewingQuarter, selectedCompany }: {
+  signals: SignalRow[]; viewingQuarter: string | null; selectedCompany: string;
+}) {
+  const TICKERS = HYPERSCALER_ORDER;
+  const activeTickers = selectedCompany === 'all' ? TICKERS : [selectedCompany];
+
+  return (
+    <div>
+      {/* Column headers */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: selectedCompany === 'all' ? '60px repeat(4, 1fr)' : '60px 1fr',
+        gap: 0, marginBottom: 4,
+      }}>
+        {['Quarter', ...activeTickers].map(h => (
+          <span key={h} style={{ fontSize: 9, color: '#4a4030', letterSpacing: '0.07em', textTransform: 'uppercase', paddingBottom: 6 }}>
+            {h}
+          </span>
+        ))}
+      </div>
+
+      {QUARTER_ORDER.map(q => {
+        const qRows = signals.filter(r => r.quarter === q && r.type === 'hyperscaler');
+        const isViewing = q === (viewingQuarter ?? QUARTER_ORDER[QUARTER_ORDER.length - 1]);
+        return (
+          <div key={q} style={{
+            borderTop: '0.5px solid #1a1812',
+            borderLeft: isViewing ? '1.5px solid #c9a84c33' : '1.5px solid transparent',
+            paddingLeft: isViewing ? 6 : 0,
+            paddingTop: 8, paddingBottom: 8,
+          }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: selectedCompany === 'all' ? '60px repeat(4, 1fr)' : '60px 1fr',
+              alignItems: 'start', gap: 0,
+            }}>
+              <span style={{ fontSize: 11, color: '#a09080', paddingTop: 2 }}>{q}</span>
+              {activeTickers.map(ticker => {
+                const row = qRows.find(r => r.ticker === ticker);
+                const rawScore = row?.storage_score;
+                const score = rawScore != null && rawScore !== '' ? parseFloat(rawScore) : null;
+                const label = score != null ? (STORAGE_SCORE_LABELS[Math.round(score)] ?? `${score.toFixed(0)}/5`) : '—';
+                const style = score != null ? storageScoreStyle(score) : { bg: '#0e0d0a', color: '#4a4030', border: '#1a1812' };
+                const quote = row?.storage_quote;
+                return (
+                  <div key={ticker} style={{ paddingRight: 6 }}>
+                    <span style={{
+                      fontSize: 9, padding: '2px 6px', borderRadius: 3, display: 'inline-block',
+                      background: style.bg, color: style.color, border: `0.5px solid ${style.border}`,
+                    }}>
+                      {label}
+                    </span>
+                    {selectedCompany !== 'all' && quote && score != null && score > 1 && (
+                      <p style={{ fontSize: 10, color: '#7a6e58', lineHeight: 1.6, fontStyle: 'italic', marginTop: 5, marginBottom: 0, borderLeft: '1.5px solid #c9a84c33', paddingLeft: 8 }}>
+                        &ldquo;{quote}&rdquo;
+                      </p>
+                    )}
+                    {selectedCompany !== 'all' && (!quote || score === 1) && (
+                      <p style={{ fontSize: 10, color: '#3a3528', marginTop: 5, marginBottom: 0 }}>No storage signal</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <p style={{ fontSize: 9, color: '#4a4030', lineHeight: 1.6, marginTop: 14 }}>
+        Storage hunger scored from explicit flash/NVMe/memory purchasing language in earnings transcripts. Score 1 = no mention, 5 = supply constraint. Only AMZN has shown explicit memory constraint language to date.
+      </p>
+    </div>
+  );
+}
+
+// ── AI urgency evidence panel ─────────────────────────────────────────────
+
+function AiUrgencyPanel({ signals, viewingQuarter, selectedCompany }: {
+  signals: SignalRow[]; viewingQuarter: string | null; selectedCompany: string;
+}) {
+  const TICKERS = HYPERSCALER_ORDER;
+  const activeTickers = selectedCompany === 'all' ? TICKERS : [selectedCompany];
+
+  return (
+    <div>
+      {/* Column headers */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: selectedCompany === 'all' ? '60px repeat(4, 1fr)' : '60px 1fr',
+        gap: 0, marginBottom: 4,
+      }}>
+        {['Quarter', ...activeTickers].map(h => (
+          <span key={h} style={{ fontSize: 9, color: '#4a4030', letterSpacing: '0.07em', textTransform: 'uppercase', paddingBottom: 6 }}>
+            {h}
+          </span>
+        ))}
+      </div>
+
+      {QUARTER_ORDER.map(q => {
+        const qRows = signals.filter(r => r.quarter === q && r.type === 'hyperscaler');
+        const isViewing = q === (viewingQuarter ?? QUARTER_ORDER[QUARTER_ORDER.length - 1]);
+        return (
+          <div key={q} style={{
+            borderTop: '0.5px solid #1a1812',
+            borderLeft: isViewing ? '1.5px solid #5dcaa533' : '1.5px solid transparent',
+            paddingLeft: isViewing ? 6 : 0,
+            paddingTop: 8, paddingBottom: 8,
+          }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: selectedCompany === 'all' ? '60px repeat(4, 1fr)' : '60px 1fr',
+              alignItems: 'start', gap: 0,
+            }}>
+              <span style={{ fontSize: 11, color: '#a09080', paddingTop: 2 }}>{q}</span>
+              {activeTickers.map(ticker => {
+                const row = qRows.find(r => r.ticker === ticker);
+                const rawScore = row?.mgmt_tone_score;
+                const score = rawScore != null && rawScore !== '' ? parseFloat(rawScore) : null;
+                const label = score != null ? (URGENCY_SCORE_LABELS[Math.round(score)] ?? `${score.toFixed(0)}/5`) : '—';
+                const style = score != null ? urgencyScoreStyle(score) : { bg: '#0e0d0a', color: '#4a4030', border: '#1a1812' };
+                const quote = row?.mgmt_tone_quote;
+                return (
+                  <div key={ticker} style={{ paddingRight: 6 }}>
+                    <span style={{
+                      fontSize: 9, padding: '2px 6px', borderRadius: 3, display: 'inline-block',
+                      background: style.bg, color: style.color, border: `0.5px solid ${style.border}`,
+                    }}>
+                      {label}
+                    </span>
+                    {selectedCompany !== 'all' && quote && (
+                      <p style={{ fontSize: 10, color: '#7a6e58', lineHeight: 1.6, fontStyle: 'italic', marginTop: 5, marginBottom: 0, borderLeft: '1.5px solid #5dcaa533', paddingLeft: 8 }}>
+                        &ldquo;{quote}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <p style={{ fontSize: 9, color: '#4a4030', lineHeight: 1.6, marginTop: 14 }}>
+        AI urgency scored on concrete capacity constraint language only — not general optimism. Score 1 = no urgency, 5 = explicit demand exceeding supply.
+      </p>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function SignalsPage({
@@ -418,13 +609,15 @@ export default function SignalsPage({
   const signalDefs = isSupply ? SUPPLY_SIGNALS : DEMAND_SIGNALS;
   const isTfSignal = activeSignal === 'tf';
   const isInventorySignal = activeSignal === 'inventory';
-  const activeSigDef = isTfSignal ? null : (signalDefs.find(s => s.key === activeSignal) ?? signalDefs[0]);
+  const isStorageSignal = activeSignal === 'storage';
+  const isAiSignal = activeSignal === 'ai';
+  const activeSigDef = (isTfSignal || isStorageSignal || isAiSignal) ? null : (signalDefs.find(s => s.key === activeSignal) ?? signalDefs[0]);
 
   let evidenceRows = activeRows
     .filter(r => r.type === typeFilter)
     .filter(r => selectedCompany === 'all' || r.ticker === selectedCompany);
 
-  if (activeSigDef) {
+  if (activeSigDef && !isStorageSignal && !isAiSignal) {
     const field = activeSigDef.field as keyof SignalRow;
     evidenceRows = evidenceRows.sort((a, b) => num(b[field] as string) - num(a[field] as string));
   }
@@ -489,6 +682,10 @@ export default function SignalsPage({
   const allLabel = isSupply ? 'All vendors' : 'All companies';
   const evidencePanelTitle = isTfSignal
     ? 'NAND Contract Price — all quarters'
+    : isStorageSignal
+    ? 'Storage hunger — all quarters'
+    : isAiSignal
+    ? 'AI demand urgency — all quarters'
     : `${activeSigDef?.label ?? ''} — strongest first`;
 
   return (
@@ -669,6 +866,10 @@ export default function SignalsPage({
             <TfPricingPanel tfPricingByQuarter={data.tfPricingByQuarter} />
           ) : isInventorySignal ? (
             <InventoryPanel signals={signals} />
+          ) : isStorageSignal ? (
+            <StoragePanel signals={signals} viewingQuarter={viewingQuarter} selectedCompany={selectedCompany} />
+          ) : isAiSignal ? (
+            <AiUrgencyPanel signals={signals} viewingQuarter={viewingQuarter} selectedCompany={selectedCompany} />
           ) : evidenceRows.length === 0 ? (
             <div style={{ color: '#3a3528', fontSize: 11, paddingTop: 20, textAlign: 'center' }}>
               No data ingested yet —{' '}
