@@ -121,7 +121,7 @@ function demandToneDir(v: number): Dir {
 
 interface ChartTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; dataKey?: string; value: number; color: string }>;
+  payload?: unknown[];
   label?: string;
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
@@ -130,14 +130,6 @@ interface ChartTooltipProps {
   forecastMeta: Record<string, { confidence: number; basis: string }>;
 }
 
-const DISPLAY_KEYS = new Set([
-  'supplyIndex', 'demand',
-  'supplyForecast', 'demandForecast',
-  'supplyForecastMom', 'demandForecastMom',
-  'leadingSupply', 'trailingSupply', 'demandYoY',
-  'inventoryDays', 'tfPrice',
-  'aiUrgency', 'storageHunger',
-]);
 
 // Extract bullets from HTML <li> format or fall back to semicolon/period split
 function extractBullets(text: string): string[] {
@@ -165,15 +157,6 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, narra
     ? (narrativesForecast[label] || forecast.basis)
     : (chartView === 'mom' ? narrativesMom : narratives)[label];
   const bullets = narrative ? extractBullets(narrative) : [];
-  const labelMap: Record<string, string> = {
-    supplyIndex: 'Leading supply (index)', demand: 'Demand (index)',
-    supplyForecast: 'Supply projected', demandForecast: 'Demand projected',
-    supplyForecastMom: 'Supply projected', demandForecastMom: 'Demand projected',
-    leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply (bit growth)', demandYoY: 'Demand YoY%',
-    inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
-    aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
-  };
-  const visiblePayload = payload.filter(p => DISPLAY_KEYS.has(String(p.dataKey ?? p.name)));
 
   return (
     <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 290 }}>
@@ -194,24 +177,11 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, narra
       {!forecast && (
         <a
           href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
-          style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', display: 'block', marginBottom: 8 }}
+          style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', display: 'block' }}
         >
           drill in →
         </a>
       )}
-      <div style={{ borderTop: '0.5px solid #1e1c18', marginBottom: 5 }} />
-      {visiblePayload.map(p => (
-        <div key={String(p.dataKey ?? p.name)} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 1 }}>
-          <span style={{ fontSize: 9, color: '#4a4030' }}>{labelMap[String(p.dataKey ?? p.name)] ?? p.name}</span>
-          <span style={{ fontSize: 9, color: '#5a5040' }}>
-            {p.name === 'inventoryDays'
-              ? `${p.value.toFixed(0)}d`
-              : p.name === 'tfPrice'
-              ? `${p.value > 0 ? '+' : ''}${p.value.toFixed(1)}%`
-              : `${p.value.toFixed(1)}%`}
-          </span>
-        </div>
-      ))}
       {forecast && (() => {
         const confidence = forecastMeta[label]?.confidence ?? 0.5;
         const W = 120;
