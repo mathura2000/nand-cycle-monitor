@@ -32,6 +32,7 @@ interface ApiData {
   latestTfPrice: number | null;
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
+  narrativesForecast: Record<string, string>;
   forecastSupplyIndex: Record<string, number | null>;
   forecastDemandIndex: Record<string, number | null>;
   forecastMeta: Record<string, { confidence: number; basis: string }>;
@@ -120,13 +121,23 @@ function demandToneDir(v: number): Dir {
 
 interface ChartTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
+  payload?: Array<{ name: string; dataKey?: string; value: number; color: string }>;
   label?: string;
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
+  narrativesForecast: Record<string, string>;
   chartView: 'gap' | 'mom';
   forecastMeta: Record<string, { confidence: number; basis: string }>;
 }
+
+const DISPLAY_KEYS = new Set([
+  'supplyIndex', 'demand',
+  'supplyForecast', 'demandForecast',
+  'supplyForecastMom', 'demandForecastMom',
+  'leadingSupply', 'trailingSupply', 'demandYoY',
+  'inventoryDays', 'tfPrice',
+  'aiUrgency', 'storageHunger',
+]);
 
 // Extract bullets from HTML <li> format or fall back to semicolon/period split
 function extractBullets(text: string): string[] {
@@ -147,14 +158,17 @@ function renderBulletText(text: string): React.ReactNode {
   });
 }
 
-function ChartTooltip({ active, payload, label, narratives, narrativesMom, chartView, forecastMeta }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, label, narratives, narrativesMom, narrativesForecast, chartView, forecastMeta }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
   const forecast = forecastMeta[label];
-  const narrative = forecast ? forecast.basis : (chartView === 'mom' ? narrativesMom : narratives)[label];
+  const narrative = forecast
+    ? (narrativesForecast[label] || forecast.basis)
+    : (chartView === 'mom' ? narrativesMom : narratives)[label];
   const bullets = narrative ? extractBullets(narrative) : [];
   const labelMap: Record<string, string> = {
     supplyIndex: 'Leading supply (index)', demand: 'Demand (index)',
     supplyForecast: 'Supply projected', demandForecast: 'Demand projected',
+    supplyForecastMom: 'Supply projected', demandForecastMom: 'Demand projected',
     leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply (bit growth)', demandYoY: 'Demand YoY%',
     inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
     aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
@@ -162,6 +176,7 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, chart
   const confidence = forecast?.confidence ?? 0;
   const confidenceLabel = confidence >= 0.75 ? 'high' : confidence >= 0.45 ? 'medium' : 'low';
   const triangleWidth = Math.round(confidence * 80);
+  const visiblePayload = payload.filter(p => DISPLAY_KEYS.has(String(p.dataKey ?? p.name)));
 
   return (
     <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 290 }}>
@@ -188,9 +203,9 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, chart
         </a>
       )}
       <div style={{ borderTop: '0.5px solid #1e1c18', marginBottom: 5 }} />
-      {payload.map(p => (
-        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 1 }}>
-          <span style={{ fontSize: 9, color: '#4a4030' }}>{labelMap[p.name] ?? p.name}</span>
+      {visiblePayload.map(p => (
+        <div key={String(p.dataKey ?? p.name)} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 1 }}>
+          <span style={{ fontSize: 9, color: '#4a4030' }}>{labelMap[String(p.dataKey ?? p.name)] ?? p.name}</span>
           <span style={{ fontSize: 9, color: '#5a5040' }}>
             {p.name === 'inventoryDays'
               ? `${p.value.toFixed(0)}d`
@@ -331,7 +346,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
   }, []);
 
   if (!data) {
@@ -423,6 +438,28 @@ export default function OverviewPage() {
       demandBandSpread = bw * 2;
     }
 
+    // Momentum forecast values (as variables for band reuse)
+    const supplyForecastMomVal: number | null = (() => {
+      if (isAnchor) return data.supplyByQuarter[q]?.leading ?? null;
+      if (!isForecastQ) return null;
+      const fsi = data.forecastSupplyIndex?.[q];
+      return fsi != null ? Math.round((fsi + baseLeadingSupply) * 10) / 10 : null;
+    })();
+    const demandForecastMomVal: number | null = (() => {
+      if (isAnchor) return data.demandByQuarter[q] ?? null;
+      if (!isForecastQ) return null;
+      const fdi = data.forecastDemandIndex?.[q];
+      const priorQ = PRIOR_YEAR[q];
+      const priorIdx = priorQ ? (data.demandIndexByQuarter?.[priorQ] ?? null) : null;
+      if (fdi == null || priorIdx == null || priorIdx === 0) return null;
+      return Math.round((fdi / priorIdx - 1) * 1000) / 10;
+    })();
+    const timeMult = quartersOut === 1 ? 1.0 : 1.6;
+    const supplyMomBw = (!isForecastQ || isAnchor || supplyForecastMomVal == null)
+      ? 0 : Math.max(MIN_BAND, Math.abs(supplyForecastMomVal) * (1 - conf) * 0.3 * timeMult);
+    const demandMomBw = (!isForecastQ || isAnchor || demandForecastMomVal == null)
+      ? 0 : Math.max(MIN_BAND, Math.abs(demandForecastMomVal) * (1 - conf) * 0.3 * timeMult);
+
     return {
       quarter: q,
       qi,
@@ -442,21 +479,13 @@ export default function OverviewPage() {
       trailingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.trailing ?? null),
       demandYoY: isForecastQ ? null : (data.demandByQuarter[q] ?? null),
       // Momentum view forecast (anchor at LAST_ACTUAL, then dotted into forecast quarters)
-      supplyForecastMom: (() => {
-        if (isAnchor) return data.supplyByQuarter[q]?.leading ?? null;
-        if (!isForecastQ) return null;
-        const fsi = data.forecastSupplyIndex?.[q];
-        return fsi != null ? Math.round((fsi + baseLeadingSupply) * 10) / 10 : null;
-      })(),
-      demandForecastMom: (() => {
-        if (isAnchor) return data.demandByQuarter[q] ?? null;
-        if (!isForecastQ) return null;
-        const fdi = data.forecastDemandIndex?.[q];
-        const priorQ = PRIOR_YEAR[q];
-        const priorIdx = priorQ ? (data.demandIndexByQuarter?.[priorQ] ?? null) : null;
-        if (fdi == null || priorIdx == null || priorIdx === 0) return null;
-        return Math.round((fdi / priorIdx - 1) * 1000) / 10;
-      })(),
+      supplyForecastMom: supplyForecastMomVal,
+      demandForecastMom: demandForecastMomVal,
+      // Momentum confidence bands (same formula, momentum scale)
+      supplyBandMomBase: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyForecastMomVal - supplyMomBw : null,
+      supplyBandMomSpread: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyMomBw * 2 : null,
+      demandBandMomBase: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandForecastMomVal - demandMomBw : null,
+      demandBandMomSpread: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandMomBw * 2 : null,
       // Shared overlays
       inventoryDays: data.inventoryByQuarter?.[q] ?? null,
       tfPrice: data.tfPricingByQuarter?.[q] ?? null,
@@ -725,7 +754,7 @@ export default function OverviewPage() {
                   />
                 )}
                 <Tooltip
-                  content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} chartView={chartView} forecastMeta={data.forecastMeta ?? {}} />}
+                  content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} narrativesForecast={data.narrativesForecast ?? {}} chartView={chartView} forecastMeta={data.forecastMeta ?? {}} />}
                   wrapperStyle={{ pointerEvents: 'auto' }}
                 />
                 {/* Confidence bands — rendered before lines so lines sit on top */}
@@ -735,6 +764,14 @@ export default function OverviewPage() {
                     <Area dataKey="supplyBandSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="demandBandBase" yAxisId="y" stroke="none" fill="none" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                  </>
+                )}
+                {chartView === 'mom' && (
+                  <>
+                    <Area dataKey="supplyBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandMomSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'gap' ? (
