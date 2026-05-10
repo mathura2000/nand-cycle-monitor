@@ -128,22 +128,30 @@ interface ChartTooltipProps {
   forecastMeta: Record<string, { confidence: number; basis: string }>;
 }
 
-function parseBold(text: string): React.ReactNode {
-  const parts = text.split(/\*\*(.+?)\*\*/);
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part}</span>
-      : part
-  );
+// Extract bullets from HTML <li> format or fall back to semicolon/period split
+function extractBullets(text: string): string[] {
+  const liMatches = [...text.matchAll(/<li>([\s\S]*?)<\/li>/g)].map(m => m[1].trim());
+  if (liMatches.length > 0) return liMatches;
+  return text.trim().replace(/\.$/, '').split(/[.;]\s+/).filter(Boolean);
+}
+
+// Render inline text handling both <b>...</b> HTML and **...** markdown
+function renderBulletText(text: string): React.ReactNode {
+  const parts = text.split(/(<b>[\s\S]*?<\/b>|\*\*[\s\S]+?\*\*)/);
+  return parts.map((part, i) => {
+    if (part.startsWith('<b>') && part.endsWith('</b>'))
+      return <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part.slice(3, -4)}</span>;
+    if (part.startsWith('**') && part.endsWith('**'))
+      return <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part.slice(2, -2)}</span>;
+    return part;
+  });
 }
 
 function ChartTooltip({ active, payload, label, narratives, narrativesMom, chartView, forecastMeta }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
   const forecast = forecastMeta[label];
   const narrative = forecast ? forecast.basis : (chartView === 'mom' ? narrativesMom : narratives)[label];
-  const bullets = narrative
-    ? narrative.trim().replace(/\.$/, '').split(/[.;]\s+/).filter(Boolean)
-    : [];
+  const bullets = narrative ? extractBullets(narrative) : [];
   const labelMap: Record<string, string> = {
     supplyIndex: 'Leading supply (index)', demand: 'Demand (index)',
     supplyForecast: 'Supply projected', demandForecast: 'Demand projected',
@@ -166,7 +174,7 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, chart
           {bullets.map((b, i) => (
             <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
               <span style={{ color: '#4a4030', fontSize: 11, flexShrink: 0, marginTop: 1 }}>·</span>
-              <span style={{ fontSize: 11, color: '#a09070', lineHeight: 1.5 }}>{parseBold(b)}</span>
+              <span style={{ fontSize: 11, color: '#a09070', lineHeight: 1.5 }}>{renderBulletText(b)}</span>
             </div>
           ))}
         </div>
@@ -374,6 +382,11 @@ export default function OverviewPage() {
     return Math.abs(value) * (1 - confidence) * 0.3 * timeMultiplier;
   };
 
+  // Momentum view: absolute supply scale base for forecast line continuity
+  const baseLeadingSupply = (data.supplyByQuarter?.['Q2 2024'] as { leading?: number } | undefined)?.leading ?? 0;
+  // Momentum view: prior-year quarter map for demand YoY% derivation
+  const PRIOR_YEAR: Record<string, string> = { 'Q2 2026': 'Q2 2025', 'Q3 2026': 'Q3 2025' };
+
   const chartData = allChartQuarters.map((q, qi) => {
     const isForecastQ = !!data.forecastMeta?.[q];
     const isAnchor = q === LAST_ACTUAL;
@@ -394,13 +407,18 @@ export default function OverviewPage() {
     let demandBandBase: number | null = null;
     let demandBandSpread: number | null = null;
 
-    if (isForecastQ && supplyForecastVal != null) {
-      const bw = bandWidth(supplyForecastVal, conf, quartersOut);
+    const MIN_BAND = 5;
+    if (isAnchor) {
+      // Zero-spread anchor so bands start from the actual line
+      supplyBandBase = supplyForecastVal; supplyBandSpread = 0;
+      demandBandBase = demandForecastVal; demandBandSpread = 0;
+    } else if (isForecastQ && supplyForecastVal != null) {
+      const bw = Math.max(MIN_BAND, bandWidth(supplyForecastVal, conf, quartersOut));
       supplyBandBase = supplyForecastVal - bw;
       supplyBandSpread = bw * 2;
     }
     if (isForecastQ && demandForecastVal != null) {
-      const bw = bandWidth(demandForecastVal, conf, quartersOut);
+      const bw = Math.max(MIN_BAND, bandWidth(demandForecastVal, conf, quartersOut));
       demandBandBase = demandForecastVal - bw;
       demandBandSpread = bw * 2;
     }
@@ -419,10 +437,26 @@ export default function OverviewPage() {
       supplyBandSpread,
       demandBandBase,
       demandBandSpread,
-      // Momentum view
+      // Momentum view actuals
       leadingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.leading ?? null),
       trailingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.trailing ?? null),
       demandYoY: isForecastQ ? null : (data.demandByQuarter[q] ?? null),
+      // Momentum view forecast (anchor at LAST_ACTUAL, then dotted into forecast quarters)
+      supplyForecastMom: (() => {
+        if (isAnchor) return data.supplyByQuarter[q]?.leading ?? null;
+        if (!isForecastQ) return null;
+        const fsi = data.forecastSupplyIndex?.[q];
+        return fsi != null ? Math.round((fsi + baseLeadingSupply) * 10) / 10 : null;
+      })(),
+      demandForecastMom: (() => {
+        if (isAnchor) return data.demandByQuarter[q] ?? null;
+        if (!isForecastQ) return null;
+        const fdi = data.forecastDemandIndex?.[q];
+        const priorQ = PRIOR_YEAR[q];
+        const priorIdx = priorQ ? (data.demandIndexByQuarter?.[priorQ] ?? null) : null;
+        if (fdi == null || priorIdx == null || priorIdx === 0) return null;
+        return Math.round((fdi / priorIdx - 1) * 1000) / 10;
+      })(),
       // Shared overlays
       inventoryDays: data.inventoryByQuarter?.[q] ?? null,
       tfPrice: data.tfPricingByQuarter?.[q] ?? null,
@@ -645,16 +679,7 @@ export default function OverviewPage() {
                 onMouseMove={(e) => { if (e.activeLabel) setHoveredQuarter(e.activeLabel as string); }}
                 onMouseLeave={() => setHoveredQuarter(null)}
               >
-                <defs>
-                  <linearGradient id="supplyBandGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#c9a84c" stopOpacity={0.12} />
-                    <stop offset="100%" stopColor="#c9a84c" stopOpacity={0.04} />
-                  </linearGradient>
-                  <linearGradient id="demandBandGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#4a7fa5" stopOpacity={0.12} />
-                    <stop offset="100%" stopColor="#4a7fa5" stopOpacity={0.04} />
-                  </linearGradient>
-                </defs>
+                <defs></defs>
                 <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
                 <XAxis
                   dataKey="quarter"
@@ -707,9 +732,9 @@ export default function OverviewPage() {
                 {chartView === 'gap' && (
                   <>
                     <Area dataKey="supplyBandBase" yAxisId="y" stroke="none" fill="none" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="supplyBandSpread" yAxisId="y" stroke="none" fill="url(#supplyBandGrad)" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="demandBandBase" yAxisId="y" stroke="none" fill="none" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="url(#demandBandGrad)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'gap' ? (
@@ -784,13 +809,13 @@ export default function OverviewPage() {
                       connectNulls
                     />
                     <Line
-                      dataKey="supplyForecast" name="supplyForecast" yAxisId="y"
+                      dataKey="supplyForecastMom" name="supplyForecast" yAxisId="y"
                       stroke="#c9a84c" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
                       dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
                       connectNulls
                     />
                     <Line
-                      dataKey="demandForecast" name="demandForecast" yAxisId="y"
+                      dataKey="demandForecastMom" name="demandForecast" yAxisId="y"
                       stroke="#4a7fa5" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
                       dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                       connectNulls
