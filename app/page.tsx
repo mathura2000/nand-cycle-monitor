@@ -31,6 +31,7 @@ interface ApiData {
   tfPricingByQuarter: Record<string, number | null>;
   latestTfPrice: number | null;
   narratives: Record<string, string>;
+  narrativesMom: Record<string, string>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -117,6 +118,8 @@ interface ChartTooltipProps {
   payload?: Array<{ name: string; value: number; color: string }>;
   label?: string;
   narratives: Record<string, string>;
+  narrativesMom: Record<string, string>;
+  chartView: 'gap' | 'mom';
 }
 
 function parseBold(text: string): React.ReactNode {
@@ -128,14 +131,15 @@ function parseBold(text: string): React.ReactNode {
   );
 }
 
-function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, label, narratives, narrativesMom, chartView }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
-  const narrative = narratives[label];
+  const narrative = (chartView === 'mom' ? narrativesMom : narratives)[label];
   const bullets = narrative
     ? narrative.trim().replace(/\.$/, '').split(/\.\s+/).filter(Boolean)
     : [];
   const labelMap: Record<string, string> = {
     supplyIndex: 'Leading supply (index)', demand: 'Demand (index)',
+    leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply (bit growth)', demandYoY: 'Demand YoY%',
     inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
     aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
   };
@@ -200,23 +204,23 @@ function Spark({ values, color }: { values: number[]; color: string }) {
 // ── Gap bar ────────────────────────────────────────────────────────────────
 
 function GapBar({
-  supplyByQuarter,
+  supplyLeadingByQuarter,
   demandByQuarter,
   gapQ,
 }: {
-  supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>;
+  supplyLeadingByQuarter: Record<string, number | null>;
   demandByQuarter: Record<string, number | null>;
   gapQ: string;
 }) {
-  const allGaps = Object.keys(supplyByQuarter)
+  const allGaps = Object.keys(supplyLeadingByQuarter)
     .map(q => {
-      const s = supplyByQuarter[q]?.leading;
+      const s = supplyLeadingByQuarter[q];
       const d = demandByQuarter[q];
       return s != null && d != null ? d - s : null;
     })
     .filter((v): v is number => v !== null);
 
-  const leadingSupply = supplyByQuarter[gapQ]?.leading ?? null;
+  const leadingSupply = supplyLeadingByQuarter[gapQ] ?? null;
   const demand = demandByQuarter[gapQ] ?? null;
   const gapDiff = leadingSupply != null && demand != null ? demand - leadingSupply : null;
 
@@ -257,6 +261,9 @@ function GapBar({
       </div>
       <span style={{ ...S.label, textAlign: 'right' }}>Gap wide · safe territory</span>
       <span style={S.status}>· {statusText}</span>
+      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: '#111009', color: '#4a4030', border: '0.5px solid #2a2518', whiteSpace: 'nowrap' }}>
+        Absorption gap · always
+      </span>
     </div>
   );
 }
@@ -272,13 +279,14 @@ export default function OverviewPage() {
   const [showAiUrgency, setShowAiUrgency] = useState(false);
   const [showStorageHunger, setShowStorageHunger] = useState(false);
   const [hoveredQuarter, setHoveredQuarter] = useState<string | null>(null);
+  const [chartView, setChartView] = useState<'gap' | 'mom'>('gap');
 
   useEffect(() => {
     setMounted(true);
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {} }));
   }, []);
 
   if (!data) {
@@ -324,8 +332,14 @@ export default function OverviewPage() {
 
   const chartData = allChartQuarters.map(q => ({
     quarter: q,
+    // Gap view
     supplyIndex: data.supplyIndexByQuarter?.[q] ?? null,
     demand: demandNormByQuarter[q] ?? null,
+    // Momentum view
+    leadingSupply: data.supplyByQuarter[q]?.leading ?? null,
+    trailingSupply: data.supplyByQuarter[q]?.trailing ?? null,
+    demandYoY: data.demandByQuarter[q] ?? null,
+    // Shared overlays
     inventoryDays: data.inventoryByQuarter?.[q] ?? null,
     tfPrice: data.tfPricingByQuarter?.[q] ?? null,
     aiUrgency: normalizeScore(data.urgencyByQuarter?.[q] ?? null),
@@ -410,10 +424,30 @@ export default function OverviewPage() {
 
       {/* ── Hero chart ──────────────────────────────────────────────────── */}
       <div style={S.chartCard}>
-        <div style={S.chartLabel as React.CSSProperties}>Primary signal</div>
-        <div style={S.chartTitle as React.CSSProperties}>Supply vs Demand Growth</div>
-        <div style={S.chartSub as React.CSSProperties}>
-          Both lines indexed to Q2 2024 = 0 · % change from baseline · {quarters.length} quarters
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
+          <div>
+            <div style={S.chartLabel as React.CSSProperties}>Primary signal</div>
+            <div style={S.chartTitle as React.CSSProperties}>
+              {chartView === 'gap' ? 'Demand Absorption Gap' : 'YoY Cycle Momentum'}
+            </div>
+            <div style={S.chartSub as React.CSSProperties}>
+              {chartView === 'gap'
+                ? 'Leading supply vs hyperscaler capex · Q2 2024 baseline'
+                : 'Supply and demand acceleration quarter by quarter · YoY %'}
+            </div>
+          </div>
+          <select
+            value={chartView}
+            onChange={e => setChartView(e.target.value as 'gap' | 'mom')}
+            style={{
+              background: '#111009', color: '#8a7e60', fontSize: 10,
+              border: '0.5px solid #2a2518', borderRadius: 4, padding: '3px 8px',
+              cursor: 'pointer', fontFamily: 'var(--font-sans)', marginTop: 2, flexShrink: 0,
+            }}
+          >
+            <option value="gap">Demand Absorption Gap</option>
+            <option value="mom">YoY Cycle Momentum</option>
+          </select>
         </div>
         <div style={{ display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap' }}>
           <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
@@ -424,35 +458,58 @@ export default function OverviewPage() {
             <input type="checkbox" checked={showTfPrice} onChange={e => setShowTfPrice(e.target.checked)} style={{ accentColor: '#5dcaa5' }} />
             NAND Price QoQ%
           </label>
-          <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
-            <input type="checkbox" checked={showAiUrgency} onChange={e => setShowAiUrgency(e.target.checked)} style={{ accentColor: '#4a7fa5' }} />
-            AI urgency
-          </label>
-          <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
-            <input type="checkbox" checked={showStorageHunger} onChange={e => setShowStorageHunger(e.target.checked)} style={{ accentColor: '#c87a30' }} />
-            Storage hunger
-          </label>
+          {chartView === 'gap' && (
+            <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+              <input type="checkbox" checked={showAiUrgency} onChange={e => setShowAiUrgency(e.target.checked)} style={{ accentColor: '#4a7fa5' }} />
+              AI urgency
+            </label>
+          )}
+          {chartView === 'gap' && (
+            <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+              <input type="checkbox" checked={showStorageHunger} onChange={e => setShowStorageHunger(e.target.checked)} style={{ accentColor: '#c87a30' }} />
+              Storage hunger
+            </label>
+          )}
         </div>
         <div style={S.legend as React.CSSProperties}>
-          <div style={S.legItem as React.CSSProperties}>
-            <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="2" /></svg>
-            Leading supply (index)
-          </div>
-          <div style={S.legItem as React.CSSProperties}>
-            <div style={{ ...S.legDot, background: '#4a7fa5' }} />
-            Demand (index)
-          </div>
-          {showAiUrgency && (
-            <div style={S.legItem as React.CSSProperties}>
-              <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
-              AI urgency (norm. 0–100%)
-            </div>
-          )}
-          {showStorageHunger && (
-            <div style={S.legItem as React.CSSProperties}>
-              <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c87a30" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
-              Storage hunger (norm. 0–100%)
-            </div>
+          {chartView === 'gap' ? (
+            <>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="2" /></svg>
+                Leading supply (index)
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <div style={{ ...S.legDot, background: '#4a7fa5' }} />
+                Demand (index)
+              </div>
+              {showAiUrgency && (
+                <div style={S.legItem as React.CSSProperties}>
+                  <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
+                  AI urgency (norm. 0–100%)
+                </div>
+              )}
+              {showStorageHunger && (
+                <div style={S.legItem as React.CSSProperties}>
+                  <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c87a30" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
+                  Storage hunger (norm. 0–100%)
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="2" /></svg>
+                Leading supply
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
+                Trailing supply (bit growth)
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <div style={{ ...S.legDot, background: '#4a7fa5' }} />
+                Demand YoY%
+              </div>
+            </>
           )}
           {showInventory && (
             <div style={S.legItem as React.CSSProperties}>
@@ -469,7 +526,7 @@ export default function OverviewPage() {
         </div>
 
         {mounted ? (
-          <ResponsiveContainer width="100%" height={190}>
+          <ResponsiveContainer width="100%" height={320}>
             <LineChart
               data={chartData}
               margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
@@ -489,7 +546,7 @@ export default function OverviewPage() {
                 axisLine={{ stroke: '#2a2820' }}
                 tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
-                label={{ value: '% Δ from Q2 2024', angle: -90, position: 'insideLeft', offset: 12, style: { fontSize: 7, fill: '#4a4030', fontFamily: 'var(--font-sans)' } }}
+                label={{ value: chartView === 'gap' ? '% Δ from Q2 2024' : 'Year-over-year % (supply vs demand growth)', angle: -90, position: 'insideLeft', offset: 12, style: { fontSize: 7, fill: '#4a4030', fontFamily: 'var(--font-sans)' } }}
                 width={52}
               />
               {showInventory && (
@@ -516,36 +573,61 @@ export default function OverviewPage() {
                 />
               )}
               <Tooltip
-                content={<ChartTooltip narratives={data.narratives ?? {}} />}
+                content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} chartView={chartView} />}
                 wrapperStyle={{ pointerEvents: 'auto' }}
               />
-              <Line
-                dataKey="supplyIndex" name="supplyIndex" yAxisId="y"
-                stroke="#c9a84c" strokeWidth={2}
-                dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
-                connectNulls
-              />
-              <Line
-                dataKey="demand" name="demand" yAxisId="y"
-                stroke="#4a7fa5" strokeWidth={2}
-                dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
-                connectNulls
-              />
-              {showAiUrgency && (
-                <Line
-                  dataKey="aiUrgency" name="aiUrgency" yAxisId="y"
-                  stroke="#4a7fa5" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
-                  dot={false} activeDot={{ r: 3, fill: '#4a7fa5' }}
-                  connectNulls
-                />
-              )}
-              {showStorageHunger && (
-                <Line
-                  dataKey="storageHunger" name="storageHunger" yAxisId="y"
-                  stroke="#c87a30" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
-                  dot={false} activeDot={{ r: 3, fill: '#c87a30' }}
-                  connectNulls
-                />
+              {chartView === 'gap' ? (
+                <>
+                  <Line
+                    dataKey="supplyIndex" name="supplyIndex" yAxisId="y"
+                    stroke="#c9a84c" strokeWidth={2}
+                    dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                    connectNulls
+                  />
+                  <Line
+                    dataKey="demand" name="demand" yAxisId="y"
+                    stroke="#4a7fa5" strokeWidth={2}
+                    dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
+                    connectNulls
+                  />
+                  {showAiUrgency && (
+                    <Line
+                      dataKey="aiUrgency" name="aiUrgency" yAxisId="y"
+                      stroke="#4a7fa5" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
+                      dot={false} activeDot={{ r: 3, fill: '#4a7fa5' }}
+                      connectNulls
+                    />
+                  )}
+                  {showStorageHunger && (
+                    <Line
+                      dataKey="storageHunger" name="storageHunger" yAxisId="y"
+                      stroke="#c87a30" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
+                      dot={false} activeDot={{ r: 3, fill: '#c87a30' }}
+                      connectNulls
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <Line
+                    dataKey="leadingSupply" name="leadingSupply" yAxisId="y"
+                    stroke="#c9a84c" strokeWidth={2}
+                    dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                    connectNulls
+                  />
+                  <Line
+                    dataKey="trailingSupply" name="trailingSupply" yAxisId="y"
+                    stroke="#c9a84c" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.6}
+                    dot={false} activeDot={{ r: 3, fill: '#c9a84c' }}
+                    connectNulls
+                  />
+                  <Line
+                    dataKey="demandYoY" name="demandYoY" yAxisId="y"
+                    stroke="#4a7fa5" strokeWidth={2}
+                    dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
+                    connectNulls
+                  />
+                </>
               )}
               {showInventory && (
                 <Line
@@ -566,12 +648,12 @@ export default function OverviewPage() {
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div style={{ height: 190 }} />
+          <div style={{ height: 320 }} />
         )}
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
-      <GapBar supplyByQuarter={data.supplyByQuarter} demandByQuarter={demandNormByQuarter} gapQ={gapQ} />
+      <GapBar supplyLeadingByQuarter={data.supplyIndexByQuarter ?? {}} demandByQuarter={demandNormByQuarter} gapQ={gapQ} />
 
       {/* ── Signal panels ───────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>

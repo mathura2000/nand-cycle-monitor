@@ -228,8 +228,10 @@ export async function GET(req: NextRequest) {
       }));
 
       const narratives: Record<string, string> = {};
+      const narrativesMom: Record<string, string> = {};
       for (const r of (configRows ?? []) as CfgRow[]) {
         if (r.ticker === 'SIGNAL' && r.quarter && r.notes) narratives[r.quarter] = r.notes;
+        if (r.ticker === 'SIGNAL_MOM' && r.type === 'narrative_mom' && r.quarter && r.notes) narrativesMom[r.quarter] = r.notes;
       }
 
       const quarters =[...new Set(signals.map(r => r.quarter as string).filter(Boolean))];
@@ -260,10 +262,10 @@ export async function GET(req: NextRequest) {
       const sortedPricingQs = Object.keys(tfPricingByQuarter).sort((a, b) => quarterIndex(a) - quarterIndex(b));
       const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives });
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives, narrativesMom });
     } catch (error) {
       console.error('Supabase data error:', error);
-      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null });
+      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {} });
     }
   }
 
