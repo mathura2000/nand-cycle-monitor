@@ -173,9 +173,6 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, narra
     inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
     aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
   };
-  const confidence = forecast?.confidence ?? 0;
-  const confidenceLabel = confidence >= 0.75 ? 'high' : confidence >= 0.45 ? 'medium' : 'low';
-  const triangleWidth = Math.round(confidence * 80);
   const visiblePayload = payload.filter(p => DISPLAY_KEYS.has(String(p.dataKey ?? p.name)));
 
   return (
@@ -215,21 +212,26 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, narra
           </span>
         </div>
       ))}
-      {forecast && (
-        <div style={{ marginTop: 8, borderTop: '0.5px solid #1e1c18', paddingTop: 6 }}>
-          <div style={{ fontSize: 8, color: '#4a4030', letterSpacing: '0.06em', marginBottom: 4 }}>forecast confidence</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <svg width={triangleWidth + 4} height={14} style={{ flexShrink: 0 }}>
-              <polygon
-                points={`0,13 ${triangleWidth},13 ${triangleWidth},1`}
-                fill="#c9973a"
-                opacity={0.85}
-              />
+      {forecast && (() => {
+        const confidence = forecastMeta[label]?.confidence ?? 0.5;
+        const label3 = confidence >= 0.75 ? 'high' : confidence >= 0.45 ? 'medium' : 'low';
+        const W = 120;
+        const barX = Math.round(confidence * W);
+        return (
+          <div style={{ borderTop: '0.5px solid #1e1c18', paddingTop: 8, marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: '#4a4030', marginBottom: 5 }}>
+              forecast confidence
+            </div>
+            <svg width="100%" height="22" viewBox={`0 0 ${W} 22`} preserveAspectRatio="none">
+              <polygon points={`0,20 ${W},20 ${W},2`} fill="#c9973a" opacity="0.25" />
+              <rect x={barX - 1} y={4} width={2.5} height={16} fill="#c9973a" opacity={0.9} rx={1} />
+              <text x={barX} y={2} fontSize={8} fill="#c9973a" textAnchor="middle" opacity={0.8}>
+                {label3}
+              </text>
             </svg>
-            <span style={{ fontSize: 9, color: '#c9973a' }}>{confidenceLabel}</span>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -871,7 +873,23 @@ export default function OverviewPage() {
                   <Line
                     dataKey="tfPrice" name="tfPrice" yAxisId="tf"
                     stroke="#5dcaa5" strokeWidth={1.5} strokeDasharray="2 3"
-                    dot={false} activeDot={{ r: 3, fill: '#5dcaa5' }}
+                    dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
+                      const { cx, cy, payload: dp } = props;
+                      if (!cx || !cy) return <g key={dp?.quarter ?? 'tf'} />;
+                      const isForecast = dp?.quarter === 'Q2 2026';
+                      return (
+                        <circle
+                          key={dp?.quarter ?? 'tf'}
+                          cx={cx} cy={cy} r={3}
+                          fill={isForecast ? 'transparent' : '#5dcaa5'}
+                          stroke="#5dcaa5"
+                          strokeWidth={isForecast ? 1.5 : 0}
+                          strokeDasharray={isForecast ? '3 2' : undefined}
+                          opacity={isForecast ? 0.6 : 1}
+                        />
+                      );
+                    }}
+                    activeDot={{ r: 3, fill: '#5dcaa5' }}
                     connectNulls
                   />
                 )}

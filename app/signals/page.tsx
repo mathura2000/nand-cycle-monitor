@@ -318,7 +318,7 @@ function InventoryPanel({ signals }: { signals: SignalRow[] }) {
 // ── TF Pricing evidence panel ──────────────────────────────────────────────
 
 function TfPricingPanel({ tfPricingByQuarter }: { tfPricingByQuarter: Record<string, number | null> }) {
-  const quarters = QUARTER_ORDER.filter(q => tfPricingByQuarter[q] != null);
+  const quarters = [...QUARTER_ORDER, 'Q2 2026'].filter(q => tfPricingByQuarter[q] != null);
   return (
     <div>
       {quarters.map(q => {
