@@ -47,6 +47,7 @@ function parseTab(rows: string[][]): Record<string, string>[] {
 // ── Composite signal computation ───────────────────────────────────────────
 
 const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
+const FORECAST_QUARTERS = ['Q2 2026','Q3 2026'];
 
 function quarterIndex(q: string): number {
   const idx = QUARTER_ORDER.indexOf(q);
@@ -171,14 +172,49 @@ function computeDemandIndexByQuarter(signals: SigRow[]): Record<string, number |
 // Indexes the pre-computed leading supply value relative to Q2 2024.
 // Returns (value - Q2_2024_value) for each quarter, so Q2 2024 = 0.
 function computeSupplyIndexByQuarter(
-  supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>
+  supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>,
+  quarters: string[] = QUARTER_ORDER,
+  base?: number
 ): Record<string, number | null> {
-  const base = supplyByQuarter['Q2 2024']?.leading;
-  if (base == null) return {};
+  const baseVal = base ?? supplyByQuarter['Q2 2024']?.leading;
+  if (baseVal == null) return {};
   const result: Record<string, number | null> = {};
-  for (const q of QUARTER_ORDER) {
+  for (const q of quarters) {
     const v = supplyByQuarter[q]?.leading;
-    result[q] = v != null ? Math.round((v - base) * 10) / 10 : null;
+    result[q] = v != null ? Math.round((v - baseVal) * 10) / 10 : null;
+  }
+  return result;
+}
+
+// For forecast quarters: extrapolate demand index from same-quarter-prior-year actuals + forecast capex_pct (YoY%).
+// Q2 2026 extrapolates from Q2 2025 actuals; Q3 2026 extrapolates from Q3 2025 actuals.
+function computeForecastDemandIndex(
+  actualSignals: SigRow[],
+  forecastSignals: SigRow[],
+  baseActuals: Record<string, number>
+): Record<string, number | null> {
+  const result: Record<string, number | null> = {};
+  const priorYearMap: Record<string, string> = { 'Q2 2026': 'Q2 2025', 'Q3 2026': 'Q3 2025' };
+
+  for (const fq of FORECAST_QUARTERS) {
+    const priorQ = priorYearMap[fq];
+    const forecastHypers = forecastSignals.filter(r => r.type === 'hyperscaler' && r.quarter === fq);
+    const tickers = forecastHypers.map(r => r.ticker as string);
+    const indices: number[] = [];
+
+    for (const ticker of tickers) {
+      const base = baseActuals[ticker];
+      if (!base) continue;
+      const priorRow = actualSignals.find(r => r.ticker === ticker && r.quarter === priorQ && r.capex_actual_usd);
+      const fRow = forecastHypers.find(r => r.ticker === ticker);
+      if (!priorRow || !fRow || fRow.capex_pct == null || fRow.capex_pct === '') continue;
+      const priorUsd = Number(priorRow.capex_actual_usd);
+      const yoyPct = Number(fRow.capex_pct);
+      const estUsd = priorUsd * (1 + yoyPct / 100);
+      indices.push((estUsd / base) * 100);
+    }
+
+    result[fq] = indices.length > 0 ? Math.round((indices.reduce((a, b) => a + b, 0) / indices.length) * 10) / 10 : null;
   }
   return result;
 }
@@ -206,8 +242,9 @@ export async function GET(req: NextRequest) {
   // Structured data endpoint used by page components — reads from Supabase
   if (action === 'data') {
     try {
-      const [{ data: signalsRows }, { data: configRows }, { data: pricingRows }] = await Promise.all([
-        supabase.from('signals').select('*').order('quarter', { ascending: true }),
+      const [{ data: signalsRows }, { data: forecastRows }, { data: configRows }, { data: pricingRows }] = await Promise.all([
+        supabase.from('signals').select('*').or('is_forecast.is.null,is_forecast.eq.false').order('quarter', { ascending: true }),
+        supabase.from('signals').select('*').eq('is_forecast', true).order('quarter', { ascending: true }),
         supabase.from('config').select('ticker, quarter, company, type, default_url, notes'),
         supabase.from('pricing').select('quarter, nand_price_qoq_pct'),
       ]);
@@ -254,6 +291,30 @@ export async function GET(req: NextRequest) {
       const storageByQuarter = computeStorageByQuarter(signals);
       const urgencyByQuarter = computeUrgencyByQuarter(signals);
 
+      // Forecast indexes
+      const forecastSignals = ((forecastRows ?? []) as SigRow[]);
+      const forecastSupplyByQuarter = computeSupplyByQuarter(forecastSignals);
+      const actualBase = supplyByQuarter['Q2 2024']?.leading;
+      const forecastSupplyIndex = computeSupplyIndexByQuarter(forecastSupplyByQuarter, FORECAST_QUARTERS, actualBase ?? undefined);
+
+      const baseActualsForDemand: Record<string, number> = {};
+      for (const ticker of ['AMZN', 'GOOG', 'META', 'MSFT']) {
+        const base = (signalsRows ?? []).find((s: Record<string, unknown>) => s['ticker'] === ticker && s['quarter'] === 'Q2 2024');
+        if (base?.['capex_actual_usd']) baseActualsForDemand[ticker] = Number(base['capex_actual_usd']);
+      }
+      const forecastDemandIndex = computeForecastDemandIndex(signals, forecastSignals, baseActualsForDemand);
+
+      const forecastMeta: Record<string, { confidence: number; basis: string }> = {};
+      for (const row of forecastSignals) {
+        const q = row.quarter as string;
+        const conf = row.forecast_confidence != null ? Number(row.forecast_confidence) : 0.5;
+        if (!forecastMeta[q]) {
+          forecastMeta[q] = { confidence: conf, basis: (row.forecast_basis as string) ?? '' };
+        } else {
+          forecastMeta[q].confidence = Math.min(forecastMeta[q].confidence, conf);
+        }
+      }
+
       type PricingRow = { quarter: string; nand_price_qoq_pct: string | null };
       const tfPricingByQuarter: Record<string, number | null> = {};
       for (const row of (pricingRows ?? []) as PricingRow[]) {
@@ -262,10 +323,10 @@ export async function GET(req: NextRequest) {
       const sortedPricingQs = Object.keys(tfPricingByQuarter).sort((a, b) => quarterIndex(a) - quarterIndex(b));
       const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives, narrativesMom });
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives, narrativesMom, forecastSupplyIndex, forecastDemandIndex, forecastMeta });
     } catch (error) {
       console.error('Supabase data error:', error);
-      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {} });
+      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} });
     }
   }
 
