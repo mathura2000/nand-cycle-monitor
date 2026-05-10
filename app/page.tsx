@@ -31,6 +31,7 @@ interface ApiData {
   tfPricingByQuarter: Record<string, number | null>;
   latestTfPrice: number | null;
   narratives: Record<string, string>;
+  narrativesMom: Record<string, string>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -117,6 +118,8 @@ interface ChartTooltipProps {
   payload?: Array<{ name: string; value: number; color: string }>;
   label?: string;
   narratives: Record<string, string>;
+  narrativesMom: Record<string, string>;
+  chartView: 'gap' | 'mom';
 }
 
 function parseBold(text: string): React.ReactNode {
@@ -128,9 +131,9 @@ function parseBold(text: string): React.ReactNode {
   );
 }
 
-function ChartTooltip({ active, payload, label, narratives }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, label, narratives, narrativesMom, chartView }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
-  const narrative = narratives[label];
+  const narrative = (chartView === 'mom' ? narrativesMom : narratives)[label];
   const bullets = narrative
     ? narrative.trim().replace(/\.$/, '').split(/\.\s+/).filter(Boolean)
     : [];
@@ -283,7 +286,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {} }));
   }, []);
 
   if (!data) {
@@ -570,7 +573,7 @@ export default function OverviewPage() {
                 />
               )}
               <Tooltip
-                content={<ChartTooltip narratives={data.narratives ?? {}} />}
+                content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} chartView={chartView} />}
                 wrapperStyle={{ pointerEvents: 'auto' }}
               />
               {chartView === 'gap' ? (
