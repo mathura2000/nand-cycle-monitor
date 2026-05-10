@@ -122,21 +122,21 @@ interface ChartTooltipProps {
   chartView: 'gap' | 'mom';
 }
 
-function parseBold(text: string): React.ReactNode {
-  const parts = text.split(/\*\*(.+?)\*\*/);
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part}</span>
-      : part
-  );
+// Transforms authored HTML narrative (<ul><li><b>) into inline-styled HTML
+// that matches the existing tooltip visual — avoids any CSS file dependency.
+function renderNarrativeHtml(html: string): string {
+  return html
+    .replace(/<b>/g, '<span style="color:#c9a84c;font-weight:700;">')
+    .replace(/<\/b>/g, '</span>')
+    .replace(/<ul>/g, '<div style="margin:0;padding:0;">')
+    .replace(/<\/ul>/g, '</div>')
+    .replace(/<li>/g, '<div style="display:flex;gap:6px;margin-bottom:4px;"><span style="color:#4a4030;font-size:11px;flex-shrink:0;margin-top:1px;">·</span><span style="font-size:11px;color:#a09070;line-height:1.5;">')
+    .replace(/<\/li>/g, '</span></div>');
 }
 
 function ChartTooltip({ active, payload, label, narratives, narrativesMom, chartView }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
   const narrative = (chartView === 'mom' ? narrativesMom : narratives)[label];
-  const bullets = narrative
-    ? narrative.trim().replace(/\.$/, '').split(/\.\s+/).filter(Boolean)
-    : [];
   const labelMap: Record<string, string> = {
     supplyIndex: 'Leading supply (index)', demand: 'Demand (index)',
     leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply (bit growth)', demandYoY: 'Demand YoY%',
@@ -146,16 +146,12 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, chart
   return (
     <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 290 }}>
       <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 8 }}>{label}</div>
-      {bullets.length > 0 && (
+      {narrative && (
         <>
-          <div style={{ marginBottom: 6 }}>
-            {bullets.map((b, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-                <span style={{ color: '#4a4030', fontSize: 11, flexShrink: 0, marginTop: 1 }}>·</span>
-                <span style={{ fontSize: 11, color: '#a09070', lineHeight: 1.5 }}>{parseBold(b)}</span>
-              </div>
-            ))}
-          </div>
+          <div
+            dangerouslySetInnerHTML={{ __html: renderNarrativeHtml(narrative) }}
+            style={{ marginBottom: 6 }}
+          />
           <a
             href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
             style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', display: 'block', marginBottom: 8 }}
