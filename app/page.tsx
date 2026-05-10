@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
+  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -32,13 +32,19 @@ interface ApiData {
   latestTfPrice: number | null;
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
+  narrativesForecast: Record<string, string>;
+  forecastSupplyIndex: Record<string, number | null>;
+  forecastDemandIndex: Record<string, number | null>;
+  forecastMeta: Record<string, { confidence: number; basis: string }>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
+const ALL_QUARTERS = [...QUARTER_ORDER, 'Q2 2026', 'Q3 2026'];
+const LAST_ACTUAL = 'Q1 2026';
 function quarterIndex(q: string): number {
-  const idx = QUARTER_ORDER.indexOf(q);
+  const idx = ALL_QUARTERS.indexOf(q);
   return idx >= 0 ? idx : 999;
 }
 
@@ -115,68 +121,85 @@ function demandToneDir(v: number): Dir {
 
 interface ChartTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
+  payload?: unknown[];
   label?: string;
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
+  narrativesForecast: Record<string, string>;
   chartView: 'gap' | 'mom';
+  forecastMeta: Record<string, { confidence: number; basis: string }>;
 }
 
-function parseBold(text: string): React.ReactNode {
-  const parts = text.split(/\*\*(.+?)\*\*/);
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part}</span>
-      : part
-  );
+
+// Extract bullets from HTML <li> format or fall back to semicolon/period split
+function extractBullets(text: string): string[] {
+  const liMatches = [...text.matchAll(/<li>([\s\S]*?)<\/li>/g)].map(m => m[1].trim());
+  if (liMatches.length > 0) return liMatches;
+  return text.trim().replace(/\.$/, '').split(/[.;]\s+/).filter(Boolean);
 }
 
-function ChartTooltip({ active, payload, label, narratives, narrativesMom, chartView }: ChartTooltipProps) {
+// Render inline text handling both <b>...</b> HTML and **...** markdown
+function renderBulletText(text: string): React.ReactNode {
+  const parts = text.split(/(<b>[\s\S]*?<\/b>|\*\*[\s\S]+?\*\*)/);
+  return parts.map((part, i) => {
+    if (part.startsWith('<b>') && part.endsWith('</b>'))
+      return <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part.slice(3, -4)}</span>;
+    if (part.startsWith('**') && part.endsWith('**'))
+      return <span key={i} style={{ color: '#c9a84c', fontWeight: 700 }}>{part.slice(2, -2)}</span>;
+    return part;
+  });
+}
+
+function ChartTooltip({ active, payload, label, narratives, narrativesMom, narrativesForecast, chartView, forecastMeta }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
-  const narrative = (chartView === 'mom' ? narrativesMom : narratives)[label];
-  const bullets = narrative
-    ? narrative.trim().replace(/\.$/, '').split(/\.\s+/).filter(Boolean)
-    : [];
-  const labelMap: Record<string, string> = {
-    supplyIndex: 'Leading supply (index)', demand: 'Demand (index)',
-    leadingSupply: 'Leading supply', trailingSupply: 'Trailing supply (bit growth)', demandYoY: 'Demand YoY%',
-    inventoryDays: 'Inventory days', tfPrice: 'NAND price QoQ%',
-    aiUrgency: 'AI urgency (norm.)', storageHunger: 'Storage hunger (norm.)',
-  };
+  const forecast = forecastMeta[label];
+  const narrative = forecast
+    ? (narrativesForecast[label] || forecast.basis)
+    : (chartView === 'mom' ? narrativesMom : narratives)[label];
+  const bullets = narrative ? extractBullets(narrative) : [];
+
   return (
     <div style={{ background: '#0b0906', border: '0.5px solid #2a2518', borderRadius: 6, padding: '10px 12px', maxWidth: 290 }}>
-      <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 9, color: '#6a6050', letterSpacing: '0.08em', marginBottom: 8 }}>
+        {label}
+        {forecast && <span style={{ marginLeft: 6, color: '#c9973a', fontSize: 8, letterSpacing: '0.06em' }}>PROJECTED</span>}
+      </div>
       {bullets.length > 0 && (
-        <>
-          <div style={{ marginBottom: 6 }}>
-            {bullets.map((b, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-                <span style={{ color: '#4a4030', fontSize: 11, flexShrink: 0, marginTop: 1 }}>·</span>
-                <span style={{ fontSize: 11, color: '#a09070', lineHeight: 1.5 }}>{parseBold(b)}</span>
-              </div>
-            ))}
-          </div>
-          <a
-            href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
-            style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', display: 'block', marginBottom: 8 }}
-          >
-            drill in →
-          </a>
-        </>
-      )}
-      <div style={{ borderTop: '0.5px solid #1e1c18', marginBottom: 5 }} />
-      {payload.map(p => (
-        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 1 }}>
-          <span style={{ fontSize: 9, color: '#4a4030' }}>{labelMap[p.name] ?? p.name}</span>
-          <span style={{ fontSize: 9, color: '#5a5040' }}>
-            {p.name === 'inventoryDays'
-              ? `${p.value.toFixed(0)}d`
-              : p.name === 'tfPrice'
-              ? `${p.value > 0 ? '+' : ''}${p.value.toFixed(1)}%`
-              : `${p.value.toFixed(1)}%`}
-          </span>
+        <div style={{ marginBottom: 6 }}>
+          {bullets.map((b, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+              <span style={{ color: '#4a4030', fontSize: 11, flexShrink: 0, marginTop: 1 }}>·</span>
+              <span style={{ fontSize: 11, color: '#a09070', lineHeight: 1.5 }}>{renderBulletText(b)}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+      {!forecast && (
+        <a
+          href={`/signals?quarter=${label.replace(' ', '+')}&tab=supply`}
+          style={{ fontSize: 10, color: '#c9a84c', textDecoration: 'none', display: 'block' }}
+        >
+          drill in →
+        </a>
+      )}
+      {forecast && (() => {
+        const confidence = forecastMeta[label]?.confidence ?? 0.5;
+        const W = 120;
+        const barX = Math.round(confidence * W);
+        return (
+          <div style={{ borderTop: '0.5px solid #1e1c18', paddingTop: 8, marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: '#4a4030', marginBottom: 5 }}>forecast confidence</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 7, color: '#c9973a', opacity: 0.55, flexShrink: 0 }}>low</span>
+              <svg style={{ flex: 1 }} height="16" viewBox={`0 0 ${W} 16`} preserveAspectRatio="none">
+                <polygon points={`0,14 ${W},14 ${W},0`} fill="#c9973a" opacity="0.25" />
+                <rect x={barX - 1} y={0} width={2.5} height={14} fill="#c9973a" opacity={0.9} rx={1} />
+              </svg>
+              <span style={{ fontSize: 7, color: '#c9973a', opacity: 0.55, flexShrink: 0 }}>high</span>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -207,11 +230,14 @@ function GapBar({
   supplyLeadingByQuarter,
   demandByQuarter,
   gapQ,
+  forecastMeta,
 }: {
   supplyLeadingByQuarter: Record<string, number | null>;
   demandByQuarter: Record<string, number | null>;
   gapQ: string;
+  forecastMeta: Record<string, { confidence: number; basis: string }>;
 }) {
+  const isForecast = !!forecastMeta[gapQ];
   const allGaps = Object.keys(supplyLeadingByQuarter)
     .map(q => {
       const s = supplyLeadingByQuarter[q];
@@ -238,18 +264,22 @@ function GapBar({
     else if (position > 33) statusText = 'Balanced · monitor';
     else statusText = 'Supply pressure building · act';
   }
+  if (isForecast) statusText = `${statusText} (projected)`;
+
+  const markerOpacity = isForecast ? 0.4 : 0.75;
 
   const S: Record<string, React.CSSProperties> = {
     card: {
       background: '#0b0906', border: '0.5px solid #1e1c18', borderRadius: 10,
       padding: '12px 22px', marginBottom: 10,
       display: 'flex', alignItems: 'center', gap: 14,
+      opacity: isForecast ? 0.7 : 1,
     },
     label: { fontSize: 9, color: '#6a6050', letterSpacing: '0.07em', textTransform: 'uppercase', width: 85, lineHeight: 1.5 } as React.CSSProperties,
     track: { flex: 1, height: 3, background: '#252318', borderRadius: 2, position: 'relative' } as React.CSSProperties,
-    fill: { height: '100%', borderRadius: 2, width: `${position}%`, background: '#c9a84c', opacity: 0.4 } as React.CSSProperties,
-    marker: { position: 'absolute', left: `${position}%`, top: -5, width: 1.5, height: 13, background: '#c9a84c', borderRadius: 1 } as React.CSSProperties,
-    status: { fontSize: 11, color: '#c9a84c', fontWeight: 500, whiteSpace: 'nowrap' } as React.CSSProperties,
+    fill: { height: '100%', borderRadius: 2, width: `${position}%`, background: '#c9a84c', opacity: markerOpacity } as React.CSSProperties,
+    marker: { position: 'absolute', left: `${position}%`, top: -5, width: 1.5, height: 13, background: '#c9a84c', borderRadius: 1, opacity: markerOpacity } as React.CSSProperties,
+    status: { fontSize: 11, color: isForecast ? '#9a7830' : '#c9a84c', fontWeight: 500, whiteSpace: 'nowrap' } as React.CSSProperties,
   };
 
   return (
@@ -286,7 +316,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
   }, []);
 
   if (!data) {
@@ -316,10 +346,7 @@ export default function OverviewPage() {
   const hyperscalers = latestRows.filter(r => r.type === 'hyperscaler');
 
   // ── Hero chart data ──────────────────────────────────────────────────────
-  const allChartQuarters = [...new Set([
-    ...Object.keys(data.supplyByQuarter),
-    ...Object.keys(data.demandIndexByQuarter ?? data.demandByQuarter),
-  ])].sort((a, b) => quarterIndex(a) - quarterIndex(b));
+  const allChartQuarters = ALL_QUARTERS;
 
   const normalizeScore = (score: number | null): number | null =>
     score != null ? Math.round((score - 1) * 25 * 10) / 10 : null;
@@ -329,24 +356,125 @@ export default function OverviewPage() {
   for (const [q, idx] of Object.entries(data.demandIndexByQuarter ?? {})) {
     demandNormByQuarter[q] = idx != null ? Math.round((idx - 100) * 10) / 10 : null;
   }
+  // Forecast demand norm
+  const forecastDemandNorm: Record<string, number | null> = {};
+  for (const [q, idx] of Object.entries(data.forecastDemandIndex ?? {})) {
+    forecastDemandNorm[q] = idx != null ? Math.round((idx - 100) * 10) / 10 : null;
+  }
 
-  const chartData = allChartQuarters.map(q => ({
-    quarter: q,
-    // Gap view
-    supplyIndex: data.supplyIndexByQuarter?.[q] ?? null,
-    demand: demandNormByQuarter[q] ?? null,
-    // Momentum view
-    leadingSupply: data.supplyByQuarter[q]?.leading ?? null,
-    trailingSupply: data.supplyByQuarter[q]?.trailing ?? null,
-    demandYoY: data.demandByQuarter[q] ?? null,
-    // Shared overlays
-    inventoryDays: data.inventoryByQuarter?.[q] ?? null,
-    tfPrice: data.tfPricingByQuarter?.[q] ?? null,
-    aiUrgency: normalizeScore(data.urgencyByQuarter?.[q] ?? null),
-    storageHunger: normalizeScore(data.storageByQuarter?.[q] ?? null),
-  }));
+  const bandWidth = (value: number, confidence: number, quartersOut: number) => {
+    const timeMultiplier = quartersOut === 1 ? 1.0 : 1.6;
+    return Math.abs(value) * (1 - confidence) * 0.3 * timeMultiplier;
+  };
+
+  // Momentum view: absolute supply scale base for forecast line continuity
+  const baseLeadingSupply = (data.supplyByQuarter?.['Q2 2024'] as { leading?: number } | undefined)?.leading ?? 0;
+  // Momentum view: prior-year quarter map for demand YoY% derivation
+  const PRIOR_YEAR: Record<string, string> = { 'Q2 2026': 'Q2 2025', 'Q3 2026': 'Q3 2025' };
+
+  const chartData = allChartQuarters.map((q, qi) => {
+    const isForecastQ = !!data.forecastMeta?.[q];
+    const isAnchor = q === LAST_ACTUAL;
+    const quartersOut = q === 'Q2 2026' ? 1 : q === 'Q3 2026' ? 2 : 0;
+    const conf = data.forecastMeta?.[q]?.confidence ?? 0.85;
+
+    const supplyForecastVal = isForecastQ
+      ? (data.forecastSupplyIndex?.[q] ?? null)
+      : isAnchor ? (data.supplyIndexByQuarter?.[q] ?? null) : null;
+
+    const demandForecastVal = isForecastQ
+      ? (forecastDemandNorm[q] ?? null)
+      : isAnchor ? (demandNormByQuarter[q] ?? null) : null;
+
+    // Confidence bands: stacked area (base + spread)
+    let supplyBandBase: number | null = null;
+    let supplyBandSpread: number | null = null;
+    let demandBandBase: number | null = null;
+    let demandBandSpread: number | null = null;
+
+    const MIN_BAND = 5;
+    if (isAnchor) {
+      // Zero-spread anchor so bands start from the actual line
+      supplyBandBase = supplyForecastVal; supplyBandSpread = 0;
+      demandBandBase = demandForecastVal; demandBandSpread = 0;
+    } else if (isForecastQ && supplyForecastVal != null) {
+      const bw = Math.max(MIN_BAND, bandWidth(supplyForecastVal, conf, quartersOut));
+      supplyBandBase = supplyForecastVal - bw;
+      supplyBandSpread = bw * 2;
+    }
+    if (isForecastQ && demandForecastVal != null) {
+      const bw = Math.max(MIN_BAND, bandWidth(demandForecastVal, conf, quartersOut));
+      demandBandBase = demandForecastVal - bw;
+      demandBandSpread = bw * 2;
+    }
+
+    // Momentum forecast values (as variables for band reuse)
+    const supplyForecastMomVal: number | null = (() => {
+      if (isAnchor) return data.supplyByQuarter[q]?.leading ?? null;
+      if (!isForecastQ) return null;
+      const fsi = data.forecastSupplyIndex?.[q];
+      return fsi != null ? Math.round((fsi + baseLeadingSupply) * 10) / 10 : null;
+    })();
+    const demandForecastMomVal: number | null = (() => {
+      if (isAnchor) return data.demandByQuarter[q] ?? null;
+      if (!isForecastQ) return null;
+      const fdi = data.forecastDemandIndex?.[q];
+      const priorQ = PRIOR_YEAR[q];
+      const priorIdx = priorQ ? (data.demandIndexByQuarter?.[priorQ] ?? null) : null;
+      if (fdi == null || priorIdx == null || priorIdx === 0) return null;
+      return Math.round((fdi / priorIdx - 1) * 1000) / 10;
+    })();
+    const timeMult = quartersOut === 1 ? 1.0 : 1.6;
+    const supplyMomBw = (!isForecastQ || isAnchor || supplyForecastMomVal == null)
+      ? 0 : Math.max(MIN_BAND, Math.abs(supplyForecastMomVal) * (1 - conf) * 0.3 * timeMult);
+    const demandMomBw = (!isForecastQ || isAnchor || demandForecastMomVal == null)
+      ? 0 : Math.max(MIN_BAND, Math.abs(demandForecastMomVal) * (1 - conf) * 0.3 * timeMult);
+
+    return {
+      quarter: q,
+      qi,
+      // Gap view actuals (null for forecast quarters)
+      supplyIndex: isForecastQ ? null : (data.supplyIndexByQuarter?.[q] ?? null),
+      demand: isForecastQ ? null : (demandNormByQuarter[q] ?? null),
+      // Gap view forecast (null except anchor + forecast quarters)
+      supplyForecast: supplyForecastVal,
+      demandForecast: demandForecastVal,
+      // Confidence bands
+      supplyBandBase,
+      supplyBandSpread,
+      demandBandBase,
+      demandBandSpread,
+      // Momentum view actuals
+      leadingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.leading ?? null),
+      trailingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.trailing ?? null),
+      demandYoY: isForecastQ ? null : (data.demandByQuarter[q] ?? null),
+      // Momentum view forecast (anchor at LAST_ACTUAL, then dotted into forecast quarters)
+      supplyForecastMom: supplyForecastMomVal,
+      demandForecastMom: demandForecastMomVal,
+      // Momentum confidence bands (same formula, momentum scale)
+      supplyBandMomBase: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyForecastMomVal - supplyMomBw : null,
+      supplyBandMomSpread: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyMomBw * 2 : null,
+      demandBandMomBase: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandForecastMomVal - demandMomBw : null,
+      demandBandMomSpread: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandMomBw * 2 : null,
+      // Shared overlays
+      inventoryDays: data.inventoryByQuarter?.[q] ?? null,
+      tfPrice: data.tfPricingByQuarter?.[q] ?? null,
+      aiUrgency: normalizeScore(data.urgencyByQuarter?.[q] ?? null),
+      storageHunger: normalizeScore(data.storageByQuarter?.[q] ?? null),
+    };
+  });
 
   const gapQ = hoveredQuarter ?? latestQ;
+
+  // Merged supply/demand for gap bar — includes both actuals and forecast
+  const mergedSupplyForGap: Record<string, number | null> = {
+    ...data.supplyIndexByQuarter,
+    ...data.forecastSupplyIndex,
+  };
+  const mergedDemandForGap: Record<string, number | null> = {
+    ...demandNormByQuarter,
+    ...forecastDemandNorm,
+  };
   const latestTfPrice = data.latestTfPrice ?? null;
 
   // ── Sparkline series (per-quarter averages) ──────────────────────────────
@@ -479,8 +607,16 @@ export default function OverviewPage() {
                 Leading supply (index)
               </div>
               <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
+                Supply projected
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
                 <div style={{ ...S.legDot, background: '#4a7fa5' }} />
                 Demand (index)
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
+                Demand projected
               </div>
               {showAiUrgency && (
                 <div style={S.legItem as React.CSSProperties}>
@@ -509,6 +645,14 @@ export default function OverviewPage() {
                 <div style={{ ...S.legDot, background: '#4a7fa5' }} />
                 Demand YoY%
               </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
+                Supply projected
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
+                Demand projected
+              </div>
             </>
           )}
           {showInventory && (
@@ -526,134 +670,216 @@ export default function OverviewPage() {
         </div>
 
         {mounted ? (
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart
-              data={chartData}
-              margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
-              onMouseMove={(e) => { if (e.activeLabel) setHoveredQuarter(e.activeLabel as string); }}
-              onMouseLeave={() => setHoveredQuarter(null)}
-            >
-              <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
-              <XAxis
-                dataKey="quarter"
-                tick={{ fill: '#6a6050', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-                axisLine={{ stroke: '#2a2820' }}
-                tickLine={false}
-              />
-              <YAxis
-                yAxisId="y"
-                tick={{ fill: '#6a6050', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-                axisLine={{ stroke: '#2a2820' }}
-                tickLine={false}
-                tickFormatter={(v: number) => `${v}%`}
-                label={{ value: chartView === 'gap' ? '% Δ from Q2 2024' : 'Year-over-year % (supply vs demand growth)', angle: -90, position: 'insideLeft', offset: 12, style: { fontSize: 7, fill: '#4a4030', fontFamily: 'var(--font-sans)' } }}
-                width={52}
-              />
-              {showInventory && (
-                <YAxis
-                  yAxisId="inv"
-                  orientation="right"
-                  domain={[100, 180]}
-                  tick={{ fill: '#993556', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-                  axisLine={false}
+          <div style={{ position: 'relative' }}>
+            <ResponsiveContainer width="100%" height={320}>
+              <ComposedChart
+                data={chartData}
+                margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+                onMouseMove={(e) => { if (e.activeLabel) setHoveredQuarter(e.activeLabel as string); }}
+                onMouseLeave={() => setHoveredQuarter(null)}
+              >
+                <defs></defs>
+                <CartesianGrid stroke="#1a1812" strokeDasharray="3 5" vertical={false} />
+                <XAxis
+                  dataKey="quarter"
+                  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+                  tick={((props: any) => (
+                    <text x={props.x} y={props.y + 10} textAnchor="middle" fontSize={9} fontFamily="var(--font-sans)" fill={data.forecastMeta?.[props.payload?.value] ? '#7a6a40' : '#6a6050'}>
+                      {props.payload?.value}
+                    </text>
+                  )) as any}
+                  axisLine={{ stroke: '#2a2820' }}
                   tickLine={false}
-                  tickFormatter={(v: number) => `${v}d`}
-                  width={34}
                 />
-              )}
-              {showTfPrice && (
                 <YAxis
-                  yAxisId="tf"
-                  orientation="right"
-                  tick={{ fill: '#3a8a6a', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-                  axisLine={false}
+                  yAxisId="y"
+                  tick={{ fill: '#6a6050', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                  axisLine={{ stroke: '#2a2820' }}
                   tickLine={false}
-                  tickFormatter={(v: number) => `${v > 0 ? '+' : ''}${v}%`}
-                  width={38}
+                  tickFormatter={(v: number) => `${v}%`}
+                  label={{ value: chartView === 'gap' ? '% Δ from Q2 2024' : 'Year-over-year % (supply vs demand growth)', angle: -90, position: 'insideLeft', offset: 12, style: { fontSize: 7, fill: '#4a4030', fontFamily: 'var(--font-sans)' } }}
+                  width={52}
                 />
-              )}
-              <Tooltip
-                content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} chartView={chartView} />}
-                wrapperStyle={{ pointerEvents: 'auto' }}
-              />
-              {chartView === 'gap' ? (
-                <>
-                  <Line
-                    dataKey="supplyIndex" name="supplyIndex" yAxisId="y"
-                    stroke="#c9a84c" strokeWidth={2}
-                    dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
-                    connectNulls
+                {showInventory && (
+                  <YAxis
+                    yAxisId="inv"
+                    orientation="right"
+                    domain={[100, 180]}
+                    tick={{ fill: '#993556', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v: number) => `${v}d`}
+                    width={34}
                   />
-                  <Line
-                    dataKey="demand" name="demand" yAxisId="y"
-                    stroke="#4a7fa5" strokeWidth={2}
-                    dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
-                    connectNulls
+                )}
+                {showTfPrice && (
+                  <YAxis
+                    yAxisId="tf"
+                    orientation="right"
+                    tick={{ fill: '#3a8a6a', fontSize: 9, fontFamily: 'var(--font-sans)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v: number) => `${v > 0 ? '+' : ''}${v}%`}
+                    width={38}
                   />
-                  {showAiUrgency && (
+                )}
+                <Tooltip
+                  content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} narrativesForecast={data.narrativesForecast ?? {}} chartView={chartView} forecastMeta={data.forecastMeta ?? {}} />}
+                  wrapperStyle={{ pointerEvents: 'auto' }}
+                />
+                {/* Confidence bands — rendered before lines so lines sit on top */}
+                {chartView === 'gap' && (
+                  <>
+                    <Area dataKey="supplyBandBase" yAxisId="y" stroke="none" fill="none" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandBase" yAxisId="y" stroke="none" fill="none" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                  </>
+                )}
+                {chartView === 'mom' && (
+                  <>
+                    <Area dataKey="supplyBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandMomSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                  </>
+                )}
+                {chartView === 'gap' ? (
+                  <>
                     <Line
-                      dataKey="aiUrgency" name="aiUrgency" yAxisId="y"
-                      stroke="#4a7fa5" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
-                      dot={false} activeDot={{ r: 3, fill: '#4a7fa5' }}
+                      dataKey="supplyIndex" name="supplyIndex" yAxisId="y"
+                      stroke="#c9a84c" strokeWidth={2}
+                      dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                      connectNulls={false}
+                    />
+                    <Line
+                      dataKey="supplyForecast" name="supplyForecast" yAxisId="y"
+                      stroke="#c9a84c" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
+                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
+                        if (!props.payload?.quarter || !data.forecastMeta?.[props.payload.quarter]) return <g key="empty" />;
+                        return <circle key={props.payload.quarter} cx={props.cx} cy={props.cy} r={3} fill="#c9a84c" opacity={0.75} />;
+                      }}
+                      activeDot={{ r: 4, fill: '#c9a84c' }}
                       connectNulls
                     />
-                  )}
-                  {showStorageHunger && (
                     <Line
-                      dataKey="storageHunger" name="storageHunger" yAxisId="y"
-                      stroke="#c87a30" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
-                      dot={false} activeDot={{ r: 3, fill: '#c87a30' }}
+                      dataKey="demand" name="demand" yAxisId="y"
+                      stroke="#4a7fa5" strokeWidth={2}
+                      dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
+                      connectNulls={false}
+                    />
+                    <Line
+                      dataKey="demandForecast" name="demandForecast" yAxisId="y"
+                      stroke="#4a7fa5" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
+                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
+                        if (!props.payload?.quarter || !data.forecastMeta?.[props.payload.quarter]) return <g key="empty" />;
+                        return <circle key={props.payload.quarter} cx={props.cx} cy={props.cy} r={3} fill="#4a7fa5" opacity={0.75} />;
+                      }}
+                      activeDot={{ r: 4, fill: '#4a7fa5' }}
                       connectNulls
                     />
-                  )}
-                </>
-              ) : (
-                <>
+                    {showAiUrgency && (
+                      <Line
+                        dataKey="aiUrgency" name="aiUrgency" yAxisId="y"
+                        stroke="#4a7fa5" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
+                        dot={false} activeDot={{ r: 3, fill: '#4a7fa5' }}
+                        connectNulls
+                      />
+                    )}
+                    {showStorageHunger && (
+                      <Line
+                        dataKey="storageHunger" name="storageHunger" yAxisId="y"
+                        stroke="#c87a30" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.7}
+                        dot={false} activeDot={{ r: 3, fill: '#c87a30' }}
+                        connectNulls
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Line
+                      dataKey="leadingSupply" name="leadingSupply" yAxisId="y"
+                      stroke="#c9a84c" strokeWidth={2}
+                      dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                      connectNulls
+                    />
+                    <Line
+                      dataKey="trailingSupply" name="trailingSupply" yAxisId="y"
+                      stroke="#c9a84c" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.6}
+                      dot={false} activeDot={{ r: 3, fill: '#c9a84c' }}
+                      connectNulls
+                    />
+                    <Line
+                      dataKey="demandYoY" name="demandYoY" yAxisId="y"
+                      stroke="#4a7fa5" strokeWidth={2}
+                      dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
+                      connectNulls
+                    />
+                    <Line
+                      dataKey="supplyForecastMom" name="supplyForecast" yAxisId="y"
+                      stroke="#c9a84c" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
+                      dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                      connectNulls
+                    />
+                    <Line
+                      dataKey="demandForecastMom" name="demandForecast" yAxisId="y"
+                      stroke="#4a7fa5" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
+                      dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
+                      connectNulls
+                    />
+                  </>
+                )}
+                {showInventory && (
                   <Line
-                    dataKey="leadingSupply" name="leadingSupply" yAxisId="y"
-                    stroke="#c9a84c" strokeWidth={2}
-                    dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                    dataKey="inventoryDays" name="inventoryDays" yAxisId="inv"
+                    stroke="#d4537e" strokeWidth={1.5} strokeDasharray="3 3"
+                    dot={false} activeDot={{ r: 3, fill: '#d4537e' }}
+                    connectNulls={false}
+                  />
+                )}
+                {showTfPrice && (
+                  <Line
+                    dataKey="tfPrice" name="tfPrice" yAxisId="tf"
+                    stroke="#5dcaa5" strokeWidth={1.5} strokeDasharray="2 3"
+                    dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
+                      const { cx, cy, payload: dp } = props;
+                      if (!cx || !cy) return <g key={dp?.quarter ?? 'tf'} />;
+                      const isForecast = dp?.quarter === 'Q2 2026';
+                      return (
+                        <circle
+                          key={dp?.quarter ?? 'tf'}
+                          cx={cx} cy={cy} r={3}
+                          fill={isForecast ? 'transparent' : '#5dcaa5'}
+                          stroke="#5dcaa5"
+                          strokeWidth={isForecast ? 1.5 : 0}
+                          strokeDasharray={isForecast ? '3 2' : undefined}
+                          opacity={isForecast ? 0.6 : 1}
+                        />
+                      );
+                    }}
+                    activeDot={{ r: 3, fill: '#5dcaa5' }}
                     connectNulls
                   />
-                  <Line
-                    dataKey="trailingSupply" name="trailingSupply" yAxisId="y"
-                    stroke="#c9a84c" strokeWidth={1.5} strokeDasharray="5 3" strokeOpacity={0.6}
-                    dot={false} activeDot={{ r: 3, fill: '#c9a84c' }}
-                    connectNulls
-                  />
-                  <Line
-                    dataKey="demandYoY" name="demandYoY" yAxisId="y"
-                    stroke="#4a7fa5" strokeWidth={2}
-                    dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
-                    connectNulls
-                  />
-                </>
-              )}
-              {showInventory && (
-                <Line
-                  dataKey="inventoryDays" name="inventoryDays" yAxisId="inv"
-                  stroke="#d4537e" strokeWidth={1.5} strokeDasharray="3 3"
-                  dot={false} activeDot={{ r: 3, fill: '#d4537e' }}
-                  connectNulls={false}
-                />
-              )}
-              {showTfPrice && (
-                <Line
-                  dataKey="tfPrice" name="tfPrice" yAxisId="tf"
-                  stroke="#5dcaa5" strokeWidth={1.5} strokeDasharray="2 3"
-                  dot={false} activeDot={{ r: 3, fill: '#5dcaa5' }}
-                  connectNulls
-                />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+            {/* Vertical divider: actuals / projected */}
+            <div style={{ position: 'absolute', top: 10, right: 20, bottom: 0, pointerEvents: 'none',
+                          width: `${(2 / ALL_QUARTERS.length) * 100}%`, left: `${(8 / ALL_QUARTERS.length) * 100}%`,
+                          borderLeft: '1px dashed #2a2518', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', paddingTop: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#4a4030', letterSpacing: '0.06em', paddingLeft: 4, paddingRight: 4, transform: 'translateX(-50%)' }}>
+                <span style={{ paddingRight: 6 }}>actuals</span>
+                <span style={{ paddingLeft: 6 }}>projected</span>
+              </div>
+            </div>
+          </div>
         ) : (
           <div style={{ height: 320 }} />
         )}
       </div>
 
       {/* ── Gap bar ──────────────────────────────────────────────────────── */}
-      <GapBar supplyLeadingByQuarter={data.supplyIndexByQuarter ?? {}} demandByQuarter={demandNormByQuarter} gapQ={gapQ} />
+      <GapBar supplyLeadingByQuarter={mergedSupplyForGap} demandByQuarter={mergedDemandForGap} gapQ={gapQ} forecastMeta={data.forecastMeta ?? {}} />
 
       {/* ── Signal panels ───────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>
