@@ -214,21 +214,19 @@ function ChartTooltip({ active, payload, label, narratives, narrativesMom, narra
       ))}
       {forecast && (() => {
         const confidence = forecastMeta[label]?.confidence ?? 0.5;
-        const label3 = confidence >= 0.75 ? 'high' : confidence >= 0.45 ? 'medium' : 'low';
         const W = 120;
         const barX = Math.round(confidence * W);
         return (
           <div style={{ borderTop: '0.5px solid #1e1c18', paddingTop: 8, marginTop: 8 }}>
-            <div style={{ fontSize: 10, color: '#4a4030', marginBottom: 5 }}>
-              forecast confidence
+            <div style={{ fontSize: 10, color: '#4a4030', marginBottom: 5 }}>forecast confidence</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 7, color: '#c9973a', opacity: 0.55, flexShrink: 0 }}>low</span>
+              <svg style={{ flex: 1 }} height="16" viewBox={`0 0 ${W} 16`} preserveAspectRatio="none">
+                <polygon points={`0,14 ${W},14 ${W},0`} fill="#c9973a" opacity="0.25" />
+                <rect x={barX - 1} y={0} width={2.5} height={14} fill="#c9973a" opacity={0.9} rx={1} />
+              </svg>
+              <span style={{ fontSize: 7, color: '#c9973a', opacity: 0.55, flexShrink: 0 }}>high</span>
             </div>
-            <svg width="100%" height="22" viewBox={`0 0 ${W} 22`} preserveAspectRatio="none">
-              <polygon points={`0,20 ${W},20 ${W},2`} fill="#c9973a" opacity="0.25" />
-              <rect x={barX - 1} y={4} width={2.5} height={16} fill="#c9973a" opacity={0.9} rx={1} />
-              <text x={barX} y={2} fontSize={8} fill="#c9973a" textAnchor="middle" opacity={0.8}>
-                {label3}
-              </text>
-            </svg>
           </div>
         );
       })()}
