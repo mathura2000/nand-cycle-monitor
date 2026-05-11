@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine,
+  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -372,21 +372,6 @@ export default function OverviewPage() {
   // Momentum view: prior-year quarter map for demand YoY% derivation
   const PRIOR_YEAR: Record<string, string> = { 'Q2 2026': 'Q2 2025', 'Q3 2026': 'Q3 2025' };
 
-  // Gap velocity: QoQ change in the supply/demand gap (for momentum view forecast zone)
-  // gap = demandNorm - supplyIndex (both indexed to Q2 2024 = 0)
-  const q1GapSupply = data.supplyIndexByQuarter?.['Q1 2026'] ?? 0;
-  const q1GapDemand = (data.demandIndexByQuarter?.['Q1 2026'] ?? 100) - 100;
-  const q1Gap = q1GapDemand - q1GapSupply;
-  const q2GapSupply = data.forecastSupplyIndex?.['Q2 2026'] ?? 0;
-  const q2GapDemand = (data.forecastDemandIndex?.['Q2 2026'] ?? 100) - 100;
-  const q2Gap = q2GapDemand - q2GapSupply;
-  const q3GapSupply = data.forecastSupplyIndex?.['Q3 2026'] ?? 0;
-  const q3GapDemand = (data.forecastDemandIndex?.['Q3 2026'] ?? 100) - 100;
-  const q3Gap = q3GapDemand - q3GapSupply;
-  // Velocity = QoQ % change in gap size (positive = gap widening)
-  const gapVelocityQ2 = q1Gap !== 0 ? Math.round((q2Gap - q1Gap) / Math.abs(q1Gap) * 1000) / 10 : 0;
-  const gapVelocityQ3 = q2Gap !== 0 ? Math.round((q3Gap - q2Gap) / Math.abs(q2Gap) * 1000) / 10 : 0;
-
   const chartData = allChartQuarters.map((q, qi) => {
     const isForecastQ = !!data.forecastMeta?.[q];
     const isAnchor = q === LAST_ACTUAL;
@@ -471,21 +456,6 @@ export default function OverviewPage() {
       supplyBandMomSpread: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyMomBw * 2 : null,
       demandBandMomBase: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandForecastMomVal - demandMomBw : null,
       demandBandMomSpread: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandMomBw * 2 : null,
-      // Gap velocity (momentum view forecast zone only)
-      gapVelocity: isAnchor ? 0 : q === 'Q2 2026' ? gapVelocityQ2 : q === 'Q3 2026' ? gapVelocityQ3 : null,
-      gapVelocityBandBase: (() => {
-        if (isAnchor) return 0;
-        const v = q === 'Q2 2026' ? gapVelocityQ2 : q === 'Q3 2026' ? gapVelocityQ3 : null;
-        if (v == null) return null;
-        const bw = Math.max(MIN_BAND, bandWidth(v, conf, quartersOut));
-        return v - bw;
-      })(),
-      gapVelocityBandSpread: (() => {
-        if (isAnchor) return 0;
-        const v = q === 'Q2 2026' ? gapVelocityQ2 : q === 'Q3 2026' ? gapVelocityQ3 : null;
-        if (v == null) return null;
-        return Math.max(MIN_BAND, bandWidth(v, conf, quartersOut)) * 2;
-      })(),
       // Shared overlays
       inventoryDays: data.inventoryByQuarter?.[q] ?? null,
       tfPrice: data.tfPricingByQuarter?.[q] ?? null,
@@ -676,8 +646,12 @@ export default function OverviewPage() {
                 Demand YoY%
               </div>
               <div style={S.legItem as React.CSSProperties}>
-                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9973a" strokeWidth="2" strokeDasharray="5 3" /></svg>
-                Gap momentum (projected)
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#c9a84c" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
+                Supply projected
+              </div>
+              <div style={S.legItem as React.CSSProperties}>
+                <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
+                Demand projected
               </div>
             </>
           )}
@@ -764,8 +738,10 @@ export default function OverviewPage() {
                 )}
                 {chartView === 'mom' && (
                   <>
-                    <Area dataKey="gapVelocityBandBase" yAxisId="y" stroke="none" fill="none" stackId="gv" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="gapVelocityBandSpread" yAxisId="y" stroke="none" fill="rgba(201,151,58,0.20)" stackId="gv" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandMomSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'gap' ? (
@@ -839,17 +815,17 @@ export default function OverviewPage() {
                       dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
                       connectNulls
                     />
-                    <ReferenceLine yAxisId="y" y={0} stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" />
                     <Line
-                      dataKey="gapVelocity" name="gapVelocity" yAxisId="y"
-                      stroke="#c9973a" strokeWidth={2} strokeDasharray="5 3"
-                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
-                        if (!props.cx || !props.cy) return <g key="gv-empty" />;
-                        if (!data.forecastMeta?.[props.payload?.quarter ?? ''] && props.payload?.quarter !== 'Q1 2026') return <g key="gv-skip" />;
-                        return <circle key={props.payload?.quarter} cx={props.cx} cy={props.cy} r={3} fill="#c9973a" />;
-                      }}
-                      activeDot={{ r: 4, fill: '#c9973a' }}
-                      connectNulls={false}
+                      dataKey="supplyForecastMom" name="supplyForecast" yAxisId="y"
+                      stroke="#c9a84c" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
+                      dot={false} activeDot={{ r: 4, fill: '#c9a84c' }}
+                      connectNulls
+                    />
+                    <Line
+                      dataKey="demandForecastMom" name="demandForecast" yAxisId="y"
+                      stroke="#4a7fa5" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
+                      dot={false} activeDot={{ r: 4, fill: '#4a7fa5' }}
+                      connectNulls
                     />
                   </>
                 )}
