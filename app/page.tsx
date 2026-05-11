@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
 } from 'recharts';
+import { Inter } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'], display: 'swap' });
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -534,7 +537,7 @@ export default function OverviewPage() {
       padding: '20px 22px 14px', marginBottom: 10,
     },
     chartLabel: { fontSize: 9, color: '#7a6e58', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 5 },
-    chartTitle: { fontSize: 14, fontWeight: 500, color: '#d4c090', marginBottom: 2 },
+    chartTitle: { fontSize: 14, fontWeight: 700, color: '#c9a84c', marginBottom: 2, fontFamily: inter.style.fontFamily },
     chartSub: { fontSize: 10, color: '#7a6e58', marginBottom: 14 },
     legend: { display: 'flex', gap: 18, marginBottom: 12 },
     legItem: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#8a7e68' },
@@ -738,7 +741,7 @@ export default function OverviewPage() {
                     <Area dataKey="supplyBandBase" yAxisId="y" stroke="none" fill="none" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="supplyBandSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="demandBandBase" yAxisId="y" stroke="none" fill="none" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.25)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'mom' && (
@@ -746,7 +749,7 @@ export default function OverviewPage() {
                     <Area dataKey="supplyBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="supplyBandMomSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                     <Area dataKey="demandBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandMomSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.20)" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMomSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.25)" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'gap' ? (
