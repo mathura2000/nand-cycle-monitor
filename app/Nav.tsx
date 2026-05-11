@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Inter } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'], display: 'swap' });
 
 interface RunMeta {
   latestQuarter: string;
@@ -54,26 +57,35 @@ export default function Nav() {
   return (
     <nav style={navStyle}>
       {/* Logo */}
-      <Link href="/" style={{ textDecoration: 'none' }}>
+      <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="7" y="7" width="14" height="14" rx="2" stroke="#c9a84c" strokeWidth="1.5" fill="none"/>
+          <rect x="10" y="10" width="8" height="8" rx="1" stroke="#c9a84c" strokeWidth="1" fill="none"/>
+          {/* top pins */}
+          <line x1="10" y1="7" x2="10" y2="3" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="14" y1="7" x2="14" y2="3" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="18" y1="7" x2="18" y2="3" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          {/* bottom pins */}
+          <line x1="10" y1="21" x2="10" y2="25" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="14" y1="21" x2="14" y2="25" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="18" y1="21" x2="18" y2="25" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          {/* left pins */}
+          <line x1="7" y1="10" x2="3" y2="10" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="7" y1="14" x2="3" y2="14" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="7" y1="18" x2="3" y2="18" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          {/* right pins */}
+          <line x1="21" y1="10" x2="25" y2="10" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="21" y1="14" x2="25" y2="14" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="21" y1="18" x2="25" y2="18" stroke="#c9a84c" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
         <span style={{
-          fontSize: 15,
+          fontSize: 16,
+          fontWeight: 700,
           color: '#c9a84c',
-          fontFamily: 'var(--font-serif)',
-          fontStyle: 'italic',
-          fontWeight: 500,
+          fontFamily: inter.style.fontFamily,
+          letterSpacing: '-0.01em',
         }}>
-          NAND · CM
-          <span style={{
-            fontSize: 9,
-            color: '#6a6050',
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            marginLeft: 10,
-            fontStyle: 'normal',
-            fontFamily: 'var(--font-sans)',
-          }}>
-            cycle monitor
-          </span>
+          Memory Industry Cycle Monitor [NAND]
         </span>
       </Link>
 
