@@ -33,6 +33,7 @@ interface ApiData {
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
   narrativesForecast: Record<string, string>;
+  narrativesForecastMom: Record<string, string>;
   forecastSupplyIndex: Record<string, number | null>;
   forecastDemandIndex: Record<string, number | null>;
   forecastMeta: Record<string, { confidence: number; basis: string }>;
@@ -126,6 +127,7 @@ interface ChartTooltipProps {
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
   narrativesForecast: Record<string, string>;
+  narrativesForecastMom: Record<string, string>;
   chartView: 'gap' | 'mom';
   forecastMeta: Record<string, { confidence: number; basis: string }>;
 }
@@ -150,11 +152,14 @@ function renderBulletText(text: string): React.ReactNode {
   });
 }
 
-function ChartTooltip({ active, payload, label, narratives, narrativesMom, narrativesForecast, chartView, forecastMeta }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, label, narratives, narrativesMom, narrativesForecast, narrativesForecastMom, chartView, forecastMeta }: ChartTooltipProps) {
   if (!active || !payload?.length || !label) return null;
   const forecast = forecastMeta[label];
+  const forecastNarrative = chartView === 'mom'
+    ? (narrativesForecastMom[label] || narrativesForecast[label])
+    : narrativesForecast[label];
   const narrative = forecast
-    ? (narrativesForecast[label] || forecast.basis)
+    ? (forecastNarrative || forecast.basis)
     : (chartView === 'mom' ? narrativesMom : narratives)[label];
   const bullets = narrative ? extractBullets(narrative) : [];
 
@@ -316,7 +321,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, narrativesForecastMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
   }, []);
 
   if (!data) {
@@ -724,7 +729,7 @@ export default function OverviewPage() {
                   />
                 )}
                 <Tooltip
-                  content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} narrativesForecast={data.narrativesForecast ?? {}} chartView={chartView} forecastMeta={data.forecastMeta ?? {}} />}
+                  content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} narrativesForecast={data.narrativesForecast ?? {}} narrativesForecastMom={data.narrativesForecastMom ?? {}} chartView={chartView} forecastMeta={data.forecastMeta ?? {}} />}
                   wrapperStyle={{ pointerEvents: 'auto' }}
                 />
                 {/* Confidence bands — rendered before lines so lines sit on top */}
