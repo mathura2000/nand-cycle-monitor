@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
+  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -866,17 +866,25 @@ export default function OverviewPage() {
                     connectNulls
                   />
                 )}
+                {/* Vertical divider: actuals / projected — snaps to Q1 2026 tick */}
+                <ReferenceLine
+                  x="Q1 2026"
+                  yAxisId="y"
+                  stroke="#2a2518"
+                  strokeDasharray="3 3"
+                  label={(props: { viewBox?: { x?: number; y?: number } }) => {
+                    const x = props.viewBox?.x ?? 0;
+                    const y = (props.viewBox?.y ?? 0) + 12;
+                    return (
+                      <g>
+                        <text x={x - 5} y={y} textAnchor="end" fontSize={8} fill="#4a4030" letterSpacing="0.06em">actuals</text>
+                        <text x={x + 5} y={y} textAnchor="start" fontSize={8} fill="#4a4030" letterSpacing="0.06em">projected</text>
+                      </g>
+                    );
+                  }}
+                />
               </ComposedChart>
             </ResponsiveContainer>
-            {/* Vertical divider: actuals / projected */}
-            <div style={{ position: 'absolute', top: 10, right: 20, bottom: 0, pointerEvents: 'none',
-                          width: `${(2 / ALL_QUARTERS.length) * 100}%`, left: `${(8 / ALL_QUARTERS.length) * 100}%`,
-                          borderLeft: '1px dashed #2a2518', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', paddingTop: 4 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#4a4030', letterSpacing: '0.06em', paddingLeft: 4, paddingRight: 4, transform: 'translateX(-50%)' }}>
-                <span style={{ paddingRight: 6 }}>actuals</span>
-                <span style={{ paddingLeft: 6 }}>projected</span>
-              </div>
-            </div>
           </div>
         ) : (
           <div style={{ height: 320 }} />
