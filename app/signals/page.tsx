@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
 } from 'recharts';
+import { sortQuarters } from '@/lib/quarter';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -70,12 +71,6 @@ const URGENCY_SCORE_LABELS: Record<number, string> = {
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
-function quarterIndex(q: string): number {
-  const idx = QUARTER_ORDER.indexOf(q);
-  return idx >= 0 ? idx : 999;
-}
 
 function num(s: string): number { return parseFloat(s) || 0; }
 
@@ -243,8 +238,9 @@ function EvidenceRow({
 
 function InventoryPanel({ signals }: { signals: SignalRow[] }) {
   const INV_TICKERS = ['MU', 'SNDK'];
+  const quarters = sortQuarters([...new Set(signals.map(r => r.quarter))]);
 
-  const rows = QUARTER_ORDER.map((q, qi) => {
+  const rows = quarters.map((q, qi) => {
     const qRows = signals.filter(r => r.quarter === q && r.type === 'vendor');
     const vals: Record<string, number | null> = {};
     for (const t of INV_TICKERS) {
@@ -260,7 +256,7 @@ function InventoryPanel({ signals }: { signals: SignalRow[] }) {
     let dirBorder = '#1e1c18';
     const muVal = vals['MU'];
     if (muVal !== null) {
-      const prevQ = QUARTER_ORDER[qi - 1];
+      const prevQ = quarters[qi - 1];
       if (prevQ) {
         const prevMuRow = signals.find(r => r.quarter === prevQ && r.ticker === 'MU');
         const prevRaw = prevMuRow?.inventory_days;
@@ -280,7 +276,7 @@ function InventoryPanel({ signals }: { signals: SignalRow[] }) {
     }
 
     return { q, vals, dirText, dirColor, dirBg, dirBorder };
-  }).filter(r => QUARTER_ORDER.includes(r.q));
+  });
 
   return (
     <div>
@@ -318,7 +314,7 @@ function InventoryPanel({ signals }: { signals: SignalRow[] }) {
 // ── TF Pricing evidence panel ──────────────────────────────────────────────
 
 function TfPricingPanel({ tfPricingByQuarter }: { tfPricingByQuarter: Record<string, number | null> }) {
-  const quarters = [...QUARTER_ORDER, 'Q2 2026'].filter(q => tfPricingByQuarter[q] != null);
+  const quarters = sortQuarters(Object.keys(tfPricingByQuarter)).filter(q => tfPricingByQuarter[q] != null);
   return (
     <div>
       {quarters.map(q => {
@@ -373,6 +369,7 @@ function StoragePanel({ signals, viewingQuarter, selectedCompany }: {
 }) {
   const TICKERS = HYPERSCALER_ORDER;
   const activeTickers = selectedCompany === 'all' ? TICKERS : [selectedCompany];
+  const quarters = sortQuarters([...new Set(signals.map(r => r.quarter))]);
 
   return (
     <div>
@@ -389,9 +386,9 @@ function StoragePanel({ signals, viewingQuarter, selectedCompany }: {
         ))}
       </div>
 
-      {QUARTER_ORDER.map(q => {
+      {quarters.map(q => {
         const qRows = signals.filter(r => r.quarter === q && r.type === 'hyperscaler');
-        const isViewing = q === (viewingQuarter ?? QUARTER_ORDER[QUARTER_ORDER.length - 1]);
+        const isViewing = q === (viewingQuarter ?? quarters[quarters.length - 1]);
         return (
           <div key={q} style={{
             borderTop: '0.5px solid #1a1812',
@@ -450,6 +447,7 @@ function AiUrgencyPanel({ signals, viewingQuarter, selectedCompany }: {
 }) {
   const TICKERS = HYPERSCALER_ORDER;
   const activeTickers = selectedCompany === 'all' ? TICKERS : [selectedCompany];
+  const quarters = sortQuarters([...new Set(signals.map(r => r.quarter))]);
 
   return (
     <div>
@@ -466,9 +464,9 @@ function AiUrgencyPanel({ signals, viewingQuarter, selectedCompany }: {
         ))}
       </div>
 
-      {QUARTER_ORDER.map(q => {
+      {quarters.map(q => {
         const qRows = signals.filter(r => r.quarter === q && r.type === 'hyperscaler');
-        const isViewing = q === (viewingQuarter ?? QUARTER_ORDER[QUARTER_ORDER.length - 1]);
+        const isViewing = q === (viewingQuarter ?? quarters[quarters.length - 1]);
         return (
           <div key={q} style={{
             borderTop: '0.5px solid #1a1812',
@@ -585,7 +583,7 @@ export default function SignalsPage({
     if (row.ticker && row.transcript_url) urlByTicker[row.ticker] = row.transcript_url;
   }
 
-  const quarters = [...new Set(signals.map(r => r.quarter))].sort((a, b) => quarterIndex(a) - quarterIndex(b));
+  const quarters = sortQuarters([...new Set(signals.map(r => r.quarter))]);
   const latestQ = quarters.at(-1) ?? '';
   const activeQ = viewingQuarter ?? latestQ;
   const activeRows = signals.filter(r => r.quarter === activeQ);
