@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
+  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine,
 } from 'recharts';
 import { Inter } from 'next/font/google';
+import { quarterAdd, sortQuarters } from '@/lib/quarter';
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' });
 
@@ -43,14 +44,6 @@ interface ApiData {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
-const ALL_QUARTERS = [...QUARTER_ORDER, 'Q2 2026', 'Q3 2026'];
-const LAST_ACTUAL = 'Q1 2026';
-function quarterIndex(q: string): number {
-  const idx = ALL_QUARTERS.indexOf(q);
-  return idx >= 0 ? idx : 999;
-}
 
 function num(s: string): number { return parseFloat(s) || 0; }
 
@@ -347,14 +340,19 @@ export default function OverviewPage() {
   }
 
   // ── Partition data ───────────────────────────────────────────────────────
-  const quarters = [...new Set(signals.map(r => r.quarter))].sort((a, b) => quarterIndex(a) - quarterIndex(b));
+  const quarters = sortQuarters([...new Set(signals.map(r => r.quarter))]);
   const latestQ = quarters.at(-1)!;
   const latestRows = signals.filter(r => r.quarter === latestQ);
   const vendors = latestRows.filter(r => r.type === 'vendor');
   const hyperscalers = latestRows.filter(r => r.type === 'hyperscaler');
 
   // ── Hero chart data ──────────────────────────────────────────────────────
-  const allChartQuarters = ALL_QUARTERS;
+  // Current quarter per methodology's "current_quarter" decision: MAX(quarter)
+  // WHERE ticker='MU' AND is_forecast is not true — derived fresh each render.
+  const muActualQuarters = sortQuarters([...new Set(signals.filter(r => r.ticker === 'MU').map(r => r.quarter))]);
+  const currentQuarter = muActualQuarters.at(-1) ?? latestQ;
+  const forecastQuarters = sortQuarters(Object.keys(data.forecastMeta ?? {}));
+  const allChartQuarters = sortQuarters([...new Set([...quarters, ...forecastQuarters])]);
 
   const normalizeScore = (score: number | null): number | null =>
     score != null ? Math.round((score - 1) * 25 * 10) / 10 : null;
@@ -377,13 +375,12 @@ export default function OverviewPage() {
 
   // Momentum view: absolute supply scale base for forecast line continuity
   const baseLeadingSupply = (data.supplyByQuarter?.['Q2 2024'] as { leading?: number } | undefined)?.leading ?? 0;
-  // Momentum view: prior-year quarter map for demand YoY% derivation
-  const PRIOR_YEAR: Record<string, string> = { 'Q2 2026': 'Q2 2025', 'Q3 2026': 'Q3 2025' };
 
   const chartData = allChartQuarters.map((q, qi) => {
     const isForecastQ = !!data.forecastMeta?.[q];
-    const isAnchor = q === LAST_ACTUAL;
-    const quartersOut = q === 'Q2 2026' ? 1 : q === 'Q3 2026' ? 2 : 0;
+    const isAnchor = q === currentQuarter;
+    const forecastIdx = forecastQuarters.indexOf(q);
+    const quartersOut = forecastIdx >= 0 ? forecastIdx + 1 : 0;
     const conf = data.forecastMeta?.[q]?.confidence ?? 0.85;
 
     const supplyForecastVal = isForecastQ
@@ -394,26 +391,27 @@ export default function OverviewPage() {
       ? (forecastDemandNorm[q] ?? null)
       : isAnchor ? (demandNormByQuarter[q] ?? null) : null;
 
-    // Confidence bands: stacked area (base + spread)
-    let supplyBandBase: number | null = null;
-    let supplyBandSpread: number | null = null;
-    let demandBandBase: number | null = null;
-    let demandBandSpread: number | null = null;
+    // Confidence bands: [low, high] tuple range on a single non-stacked Area.
+    // NOT a stacked base+spread pair — Recharts' stack accumulator hardcodes
+    // null contributions to 0 regardless of connectNulls, which collapsed an
+    // all-null forecast quarter (e.g. a fresh rolling placeholder) down to the
+    // zero baseline instead of leaving a genuine gap. A tuple range doesn't
+    // stack, so a null point is skipped entirely.
+    let supplyBand: [number, number] | null = null;
+    let demandBand: [number, number] | null = null;
 
     const MIN_BAND = 5;
     if (isAnchor) {
-      // Zero-spread anchor so bands start from the actual line
-      supplyBandBase = supplyForecastVal; supplyBandSpread = 0;
-      demandBandBase = demandForecastVal; demandBandSpread = 0;
+      // Zero-width anchor so the band starts pinned to the actual line
+      if (supplyForecastVal != null) supplyBand = [supplyForecastVal, supplyForecastVal];
+      if (demandForecastVal != null) demandBand = [demandForecastVal, demandForecastVal];
     } else if (isForecastQ && supplyForecastVal != null) {
       const bw = Math.max(MIN_BAND, bandWidth(supplyForecastVal, conf, quartersOut));
-      supplyBandBase = supplyForecastVal - bw;
-      supplyBandSpread = bw * 2;
+      supplyBand = [supplyForecastVal - bw, supplyForecastVal + bw];
     }
     if (isForecastQ && demandForecastVal != null) {
       const bw = Math.max(MIN_BAND, bandWidth(demandForecastVal, conf, quartersOut));
-      demandBandBase = demandForecastVal - bw;
-      demandBandSpread = bw * 2;
+      demandBand = [demandForecastVal - bw, demandForecastVal + bw];
     }
 
     // Momentum forecast values (as variables for band reuse)
@@ -427,8 +425,8 @@ export default function OverviewPage() {
       if (isAnchor) return data.demandByQuarter[q] ?? null;
       if (!isForecastQ) return null;
       const fdi = data.forecastDemandIndex?.[q];
-      const priorQ = PRIOR_YEAR[q];
-      const priorIdx = priorQ ? (data.demandIndexByQuarter?.[priorQ] ?? null) : null;
+      const priorQ = quarterAdd(q, -4); // same quarter, prior year
+      const priorIdx = data.demandIndexByQuarter?.[priorQ] ?? null;
       if (fdi == null || priorIdx == null || priorIdx === 0) return null;
       return Math.round((fdi / priorIdx - 1) * 1000) / 10;
     })();
@@ -437,6 +435,10 @@ export default function OverviewPage() {
       ? 0 : Math.max(MIN_BAND, Math.abs(supplyForecastMomVal) * (1 - conf) * 0.3 * timeMult);
     const demandMomBw = (!isForecastQ || isAnchor || demandForecastMomVal == null)
       ? 0 : Math.max(MIN_BAND, Math.abs(demandForecastMomVal) * (1 - conf) * 0.3 * timeMult);
+    const supplyBandMom: [number, number] | null = (isForecastQ || isAnchor) && supplyForecastMomVal != null
+      ? [supplyForecastMomVal - supplyMomBw, supplyForecastMomVal + supplyMomBw] : null;
+    const demandBandMom: [number, number] | null = (isForecastQ || isAnchor) && demandForecastMomVal != null
+      ? [demandForecastMomVal - demandMomBw, demandForecastMomVal + demandMomBw] : null;
 
     return {
       quarter: q,
@@ -448,10 +450,8 @@ export default function OverviewPage() {
       supplyForecast: supplyForecastVal,
       demandForecast: demandForecastVal,
       // Confidence bands
-      supplyBandBase,
-      supplyBandSpread,
-      demandBandBase,
-      demandBandSpread,
+      supplyBand,
+      demandBand,
       // Momentum view actuals
       leadingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.leading ?? null),
       trailingSupply: isForecastQ ? null : (data.supplyByQuarter[q]?.trailing ?? null),
@@ -460,10 +460,8 @@ export default function OverviewPage() {
       supplyForecastMom: supplyForecastMomVal,
       demandForecastMom: demandForecastMomVal,
       // Momentum confidence bands (same formula, momentum scale)
-      supplyBandMomBase: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyForecastMomVal - supplyMomBw : null,
-      supplyBandMomSpread: (isForecastQ || isAnchor) && supplyForecastMomVal != null ? supplyMomBw * 2 : null,
-      demandBandMomBase: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandForecastMomVal - demandMomBw : null,
-      demandBandMomSpread: (isForecastQ || isAnchor) && demandForecastMomVal != null ? demandMomBw * 2 : null,
+      supplyBandMom,
+      demandBandMom,
       // Shared overlays
       inventoryDays: data.inventoryByQuarter?.[q] ?? null,
       tfPrice: data.tfPricingByQuarter?.[q] ?? null,
@@ -735,21 +733,30 @@ export default function OverviewPage() {
                   content={<ChartTooltip narratives={data.narratives ?? {}} narrativesMom={data.narrativesMom ?? {}} narrativesForecast={data.narrativesForecast ?? {}} narrativesForecastMom={data.narrativesForecastMom ?? {}} chartView={chartView} forecastMeta={data.forecastMeta ?? {}} />}
                   wrapperStyle={{ pointerEvents: 'auto' }}
                 />
-                {/* Confidence bands — rendered before lines so lines sit on top */}
+                {/* Current-quarter marker — context only, subordinate to the gap scrubber below */}
+                <ReferenceLine
+                  yAxisId="y"
+                  x={currentQuarter}
+                  stroke="#4a4030"
+                  strokeDasharray="2 2"
+                  strokeOpacity={0.6}
+                  label={{ value: `Current: ${currentQuarter}`, position: 'insideTopLeft', fill: '#4a4030', fontSize: 8 }}
+                />
+                {/* Confidence bands — rendered before lines so lines sit on top.
+                    [low, high] tuple range on a single non-stacked Area — NOT a
+                    stacked base+spread pair, which collapses a null (all-null
+                    forecast) quarter down to the zero baseline regardless of
+                    connectNulls. See lib note in chartData above. */}
                 {chartView === 'gap' && (
                   <>
-                    <Area dataKey="supplyBandBase" yAxisId="y" stroke="none" fill="none" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="supplyBandSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sb" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandBase" yAxisId="y" stroke="none" fill="none" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.25)" stackId="db" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBand" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBand" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.25)" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'mom' && (
                   <>
-                    <Area dataKey="supplyBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="supplyBandMomSpread" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" stackId="sbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandMomBase" yAxisId="y" stroke="none" fill="none" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
-                    <Area dataKey="demandBandMomSpread" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.25)" stackId="dbm" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="supplyBandMom" yAxisId="y" stroke="none" fill="rgba(201,168,76,0.20)" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
+                    <Area dataKey="demandBandMom" yAxisId="y" stroke="none" fill="rgba(74,127,165,0.25)" legendType="none" tooltipType="none" dot={false} activeDot={false} connectNulls />
                   </>
                 )}
                 {chartView === 'gap' ? (
@@ -763,8 +770,8 @@ export default function OverviewPage() {
                     <Line
                       dataKey="supplyForecast" name="supplyForecast" yAxisId="y"
                       stroke="#c9a84c" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
-                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
-                        if (!props.payload?.quarter || !data.forecastMeta?.[props.payload.quarter]) return <g key="empty" />;
+                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string; supplyForecast?: number | null } }) => {
+                        if (!props.payload?.quarter || !data.forecastMeta?.[props.payload.quarter] || props.payload.supplyForecast == null) return <g key="empty" />;
                         return <circle key={props.payload.quarter} cx={props.cx} cy={props.cy} r={3} fill="#c9a84c" opacity={0.75} />;
                       }}
                       activeDot={{ r: 4, fill: '#c9a84c' }}
@@ -779,8 +786,8 @@ export default function OverviewPage() {
                     <Line
                       dataKey="demandForecast" name="demandForecast" yAxisId="y"
                       stroke="#4a7fa5" strokeWidth={2} strokeDasharray="5 3" strokeOpacity={0.75}
-                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
-                        if (!props.payload?.quarter || !data.forecastMeta?.[props.payload.quarter]) return <g key="empty" />;
+                      dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string; demandForecast?: number | null } }) => {
+                        if (!props.payload?.quarter || !data.forecastMeta?.[props.payload.quarter] || props.payload.demandForecast == null) return <g key="empty" />;
                         return <circle key={props.payload.quarter} cx={props.cx} cy={props.cy} r={3} fill="#4a7fa5" opacity={0.75} />;
                       }}
                       activeDot={{ r: 4, fill: '#4a7fa5' }}
@@ -873,7 +880,7 @@ export default function OverviewPage() {
             </ResponsiveContainer>
             {/* Vertical divider: actuals / projected */}
             <div style={{ position: 'absolute', top: 10, right: 20, bottom: 0, pointerEvents: 'none',
-                          width: `${(2 / ALL_QUARTERS.length) * 100}%`, left: `${(8 / ALL_QUARTERS.length) * 100}%`,
+                          width: `${(forecastQuarters.length / allChartQuarters.length) * 100}%`, left: `${(quarters.length / allChartQuarters.length) * 100}%`,
                           borderLeft: '1px dashed #2a2518', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', paddingTop: 4 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#4a4030', letterSpacing: '0.06em', paddingLeft: 4, paddingRight: 4, transform: 'translateX(-50%)' }}>
                 <span style={{ paddingRight: 6 }}>actuals</span>

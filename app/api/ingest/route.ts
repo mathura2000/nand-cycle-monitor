@@ -383,10 +383,12 @@ export async function POST(req: NextRequest) {
         inventory_quote: extracted.inventory_quote ?? null,
         mgmt_tone_quote: extracted.mgmt_tone_quote ?? null,
         extraction_notes: notes,
+        is_forecast: false, // successful extraction is real sourced data, never a forecast
       };
     }
 
-    // 4. Store signals
+    // 4. Store signals (forecast-snapshot + rolling-placeholder logic now lives in
+    // DB triggers trg_snapshot_forecast_before_update / trg_ensure_rolling_forecast_placeholders)
     const { error: signalsErr } = await supabase.from('signals').upsert(signalsRow, { onConflict: 'ticker,quarter' });
 
     if (signalsErr) {

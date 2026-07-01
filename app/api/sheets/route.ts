@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { supabase } from '@/lib/supabase';
+import { quarterAdd, sortQuarters } from '@/lib/quarter';
 
 const SHEET_ID = '1RFYBmGqCeoG0RwcsXZ5HHrCFqa3ViN-J26g-sAAQEDc';
 
@@ -45,14 +46,6 @@ function parseTab(rows: string[][]): Record<string, string>[] {
 }
 
 // ── Composite signal computation ───────────────────────────────────────────
-
-const QUARTER_ORDER = ['Q2 2024','Q3 2024','Q4 2024','Q1 2025','Q2 2025','Q3 2025','Q4 2025','Q1 2026'];
-const FORECAST_QUARTERS = ['Q2 2026','Q3 2026'];
-
-function quarterIndex(q: string): number {
-  const idx = QUARTER_ORDER.indexOf(q);
-  return idx >= 0 ? idx : 999;
-}
 
 // node score (1-5) → equivalent % via breakpoint interpolation
 // 1=-20, 2=-5, 3=0, 4=15, 5=35
@@ -149,7 +142,7 @@ function computeUrgencyByQuarter(signals: SigRow[]): Record<string, number | nul
   return result;
 }
 
-function computeDemandIndexByQuarter(signals: SigRow[]): Record<string, number | null> {
+function computeDemandIndexByQuarter(signals: SigRow[], quarters: string[]): Record<string, number | null> {
   const hyperscalers = signals.filter(r => r.type === 'hyperscaler');
   const baseActuals: Record<string, number> = {};
   for (const ticker of ['AMZN', 'GOOG', 'META', 'MSFT']) {
@@ -157,7 +150,7 @@ function computeDemandIndexByQuarter(signals: SigRow[]): Record<string, number |
     if (base?.capex_actual_usd) baseActuals[ticker] = Number(base.capex_actual_usd);
   }
   const result: Record<string, number | null> = {};
-  for (const q of QUARTER_ORDER) {
+  for (const q of quarters) {
     const rows = hyperscalers.filter(s =>
       s.quarter === q && s.capex_actual_usd && baseActuals[s.ticker as string]
     );
@@ -173,7 +166,7 @@ function computeDemandIndexByQuarter(signals: SigRow[]): Record<string, number |
 // Returns (value - Q2_2024_value) for each quarter, so Q2 2024 = 0.
 function computeSupplyIndexByQuarter(
   supplyByQuarter: Record<string, { leading: number | null; trailing: number | null }>,
-  quarters: string[] = QUARTER_ORDER,
+  quarters: string[],
   base?: number
 ): Record<string, number | null> {
   const baseVal = base ?? supplyByQuarter['Q2 2024']?.leading;
@@ -191,13 +184,13 @@ function computeSupplyIndexByQuarter(
 function computeForecastDemandIndex(
   actualSignals: SigRow[],
   forecastSignals: SigRow[],
-  baseActuals: Record<string, number>
+  baseActuals: Record<string, number>,
+  forecastQuarters: string[]
 ): Record<string, number | null> {
   const result: Record<string, number | null> = {};
-  const priorYearMap: Record<string, string> = { 'Q2 2026': 'Q2 2025', 'Q3 2026': 'Q3 2025' };
 
-  for (const fq of FORECAST_QUARTERS) {
-    const priorQ = priorYearMap[fq];
+  for (const fq of forecastQuarters) {
+    const priorQ = quarterAdd(fq, -4); // same quarter, prior year
     const forecastHypers = forecastSignals.filter(r => r.type === 'hyperscaler' && r.quarter === fq);
     const tickers = forecastHypers.map(r => r.ticker as string);
     const indices: number[] = [];
@@ -275,8 +268,7 @@ export async function GET(req: NextRequest) {
         if (r.ticker === 'SIGNAL_FORECAST_MOM' && r.type === 'narrative_forecast_mom' && r.quarter && r.notes) narrativesForecastMom[r.quarter] = r.notes;
       }
 
-      const quarters =[...new Set(signals.map(r => r.quarter as string).filter(Boolean))];
-      quarters.sort();
+      const quarters = sortQuarters([...new Set(signals.map(r => r.quarter as string).filter(Boolean))]);
       const latestQuarter = quarters.at(-1) ?? '';
 
       const latestRows = signals.filter(r => r.quarter === latestQuarter);
@@ -288,25 +280,26 @@ export async function GET(req: NextRequest) {
       const lastIngested = dates.at(-1) ?? '';
 
       const supplyByQuarter = computeSupplyByQuarter(signals);
-      const supplyIndexByQuarter = computeSupplyIndexByQuarter(supplyByQuarter);
+      const supplyIndexByQuarter = computeSupplyIndexByQuarter(supplyByQuarter, quarters);
       const demandByQuarter = computeDemandByQuarter(signals);
-      const demandIndexByQuarter = computeDemandIndexByQuarter(signals);
+      const demandIndexByQuarter = computeDemandIndexByQuarter(signals, quarters);
       const inventoryByQuarter = computeInventoryByQuarter(signals);
       const storageByQuarter = computeStorageByQuarter(signals);
       const urgencyByQuarter = computeUrgencyByQuarter(signals);
 
       // Forecast indexes
       const forecastSignals = ((forecastRows ?? []) as SigRow[]);
+      const forecastQuarters = sortQuarters([...new Set(forecastSignals.map(r => r.quarter as string).filter(Boolean))]);
       const forecastSupplyByQuarter = computeSupplyByQuarter(forecastSignals);
       const actualBase = supplyByQuarter['Q2 2024']?.leading;
-      const forecastSupplyIndex = computeSupplyIndexByQuarter(forecastSupplyByQuarter, FORECAST_QUARTERS, actualBase ?? undefined);
+      const forecastSupplyIndex = computeSupplyIndexByQuarter(forecastSupplyByQuarter, forecastQuarters, actualBase ?? undefined);
 
       const baseActualsForDemand: Record<string, number> = {};
       for (const ticker of ['AMZN', 'GOOG', 'META', 'MSFT']) {
         const base = (signalsRows ?? []).find((s: Record<string, unknown>) => s['ticker'] === ticker && s['quarter'] === 'Q2 2024');
         if (base?.['capex_actual_usd']) baseActualsForDemand[ticker] = Number(base['capex_actual_usd']);
       }
-      const forecastDemandIndex = computeForecastDemandIndex(signals, forecastSignals, baseActualsForDemand);
+      const forecastDemandIndex = computeForecastDemandIndex(signals, forecastSignals, baseActualsForDemand, forecastQuarters);
 
       const forecastMeta: Record<string, { confidence: number; basis: string }> = {};
       for (const row of forecastSignals) {
@@ -324,7 +317,7 @@ export async function GET(req: NextRequest) {
       for (const row of (pricingRows ?? []) as PricingRow[]) {
         tfPricingByQuarter[row.quarter] = row.nand_price_qoq_pct != null ? Number(row.nand_price_qoq_pct) : null;
       }
-      const sortedPricingQs = Object.keys(tfPricingByQuarter).sort((a, b) => quarterIndex(a) - quarterIndex(b));
+      const sortedPricingQs = sortQuarters(Object.keys(tfPricingByQuarter));
       const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
 
       return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives, narrativesMom, narrativesForecast, narrativesForecastMom, forecastSupplyIndex, forecastDemandIndex, forecastMeta });
