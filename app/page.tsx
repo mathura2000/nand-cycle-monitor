@@ -33,6 +33,7 @@ interface ApiData {
   storageByQuarter: Record<string, number | null>;
   urgencyByQuarter: Record<string, number | null>;
   tfPricingByQuarter: Record<string, number | null>;
+  tfPriceIndexByQuarter: Record<string, number | null>;
   latestTfPrice: number | null;
   narratives: Record<string, string>;
   narrativesMom: Record<string, string>;
@@ -239,7 +240,12 @@ function GapBar({
   forecastMeta: Record<string, { confidence: number; basis: string }>;
 }) {
   const isForecast = !!forecastMeta[gapQ];
+  // Calibration scale uses ACTUAL quarters only — forecast quarters must never redefine
+  // the reference frame, or every new (larger) forecast rescales prior real quarters
+  // into looking more "balanced" than they were. Forecasts get positioned on this
+  // stable scale but never widen it themselves.
   const allGaps = Object.keys(supplyLeadingByQuarter)
+    .filter(q => !forecastMeta[q])
     .map(q => {
       const s = supplyLeadingByQuarter[q];
       const d = demandByQuarter[q];
@@ -254,9 +260,18 @@ function GapBar({
   let position = 50;
   if (gapDiff !== null && allGaps.length > 1) {
     const minGap = Math.min(...allGaps);
-    const maxGap = Math.max(...allGaps);
+    const actualMaxGap = Math.max(...allGaps);
+    const actualRange = actualMaxGap - minGap || 1;
+    // Fixed headroom above the actual max — a constant fraction of the actual
+    // historical range, not tied to the current forecast's own value. This
+    // leaves visible room for forecast quarters (which trend larger) to keep
+    // separating from each other and from the current actual as you hover
+    // further out, without forecasts ever redefining the scale itself.
+    const HEADROOM_FACTOR = 0.3;
+    const maxGap = actualMaxGap + actualRange * HEADROOM_FACTOR;
     const range = maxGap - minGap || 1;
     position = Math.round(5 + ((gapDiff - minGap) / range) * 90);
+    position = Math.max(2, Math.min(98, position));
   }
 
   let statusText = 'No data';
@@ -307,6 +322,7 @@ export default function OverviewPage() {
   const [mounted, setMounted] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showTfPrice, setShowTfPrice] = useState(false);
+  const [showTfPriceIndex, setShowTfPriceIndex] = useState(false);
   const [showAiUrgency, setShowAiUrgency] = useState(false);
   const [showStorageHunger, setShowStorageHunger] = useState(false);
   const [hoveredQuarter, setHoveredQuarter] = useState<string | null>(null);
@@ -317,7 +333,7 @@ export default function OverviewPage() {
     fetch('/api/sheets?action=data')
       .then(r => r.json())
       .then(setData)
-      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, narrativesForecastMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
+      .catch(() => setData({ signals: [], latestQuarter: '', sourcesCount: 0, supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, tfPriceIndexByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, narrativesForecastMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} }));
   }, []);
 
   if (!data) {
@@ -443,6 +459,7 @@ export default function OverviewPage() {
     return {
       quarter: q,
       qi,
+      isForecastQ,
       // Gap view actuals (null for forecast quarters)
       supplyIndex: isForecastQ ? null : (data.supplyIndexByQuarter?.[q] ?? null),
       demand: isForecastQ ? null : (demandNormByQuarter[q] ?? null),
@@ -465,6 +482,7 @@ export default function OverviewPage() {
       // Shared overlays
       inventoryDays: data.inventoryByQuarter?.[q] ?? null,
       tfPrice: data.tfPricingByQuarter?.[q] ?? null,
+      tfPriceIndex: data.tfPriceIndexByQuarter?.[q] != null ? Math.round((data.tfPriceIndexByQuarter[q]! - 100) * 10) / 10 : null,
       aiUrgency: normalizeScore(data.urgencyByQuarter?.[q] ?? null),
       storageHunger: normalizeScore(data.storageByQuarter?.[q] ?? null),
     };
@@ -594,6 +612,12 @@ export default function OverviewPage() {
           </label>
           {chartView === 'gap' && (
             <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
+              <input type="checkbox" checked={showTfPriceIndex} onChange={e => setShowTfPriceIndex(e.target.checked)} style={{ accentColor: '#5dcaa5' }} />
+              NAND Price Index
+            </label>
+          )}
+          {chartView === 'gap' && (
+            <label style={{ fontSize: 10, color: '#6a6050', display: 'flex', gap: 5, cursor: 'pointer', alignItems: 'center' }}>
               <input type="checkbox" checked={showAiUrgency} onChange={e => setShowAiUrgency(e.target.checked)} style={{ accentColor: '#4a7fa5' }} />
               AI urgency
             </label>
@@ -624,6 +648,12 @@ export default function OverviewPage() {
                 <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" opacity={0.75} /></svg>
                 Demand projected
               </div>
+              {showTfPriceIndex && (
+                <div style={S.legItem as React.CSSProperties}>
+                  <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#5dcaa5" strokeWidth="1.5" strokeDasharray="1 3" /></svg>
+                  NAND Price Index (Q2&apos;24=0, shape only)
+                </div>
+              )}
               {showAiUrgency && (
                 <div style={S.legItem as React.CSSProperties}>
                   <svg width="18" height="8" style={{ marginRight: 2 }}><line x1="0" y1="4" x2="18" y2="4" stroke="#4a7fa5" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
@@ -793,6 +823,14 @@ export default function OverviewPage() {
                       activeDot={{ r: 4, fill: '#4a7fa5' }}
                       connectNulls
                     />
+                    {showTfPriceIndex && (
+                      <Line
+                        dataKey="tfPriceIndex" name="tfPriceIndex" yAxisId="y"
+                        stroke="#5dcaa5" strokeWidth={1.5} strokeDasharray="1 3" strokeOpacity={0.85}
+                        dot={false} activeDot={{ r: 3, fill: '#5dcaa5' }}
+                        connectNulls
+                      />
+                    )}
                     {showAiUrgency && (
                       <Line
                         dataKey="aiUrgency" name="aiUrgency" yAxisId="y"
@@ -856,10 +894,10 @@ export default function OverviewPage() {
                   <Line
                     dataKey="tfPrice" name="tfPrice" yAxisId="tf"
                     stroke="#5dcaa5" strokeWidth={1.5} strokeDasharray="2 3"
-                    dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string } }) => {
+                    dot={(props: { cx?: number; cy?: number; payload?: { quarter?: string; isForecastQ?: boolean } }) => {
                       const { cx, cy, payload: dp } = props;
                       if (!cx || !cy) return <g key={dp?.quarter ?? 'tf'} />;
-                      const isForecast = dp?.quarter === 'Q2 2026';
+                      const isForecast = !!dp?.isForecastQ;
                       return (
                         <circle
                           key={dp?.quarter ?? 'tf'}

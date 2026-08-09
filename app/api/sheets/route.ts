@@ -212,6 +212,23 @@ function computeForecastDemandIndex(
   return result;
 }
 
+// Compounds nand_price_qoq_pct chronologically into an index (Q2 2024 = 100), same baseline
+// convention as supply/demand. This is a shape-comparison signal, not a real $/GB price level.
+function computeTfPriceIndexByQuarter(
+  tfPricingByQuarter: Record<string, number | null>,
+  sortedQuarters: string[]
+): Record<string, number | null> {
+  const result: Record<string, number | null> = {};
+  let idx = 100;
+  for (const q of sortedQuarters) {
+    const qoq = tfPricingByQuarter[q];
+    if (qoq == null) { result[q] = null; continue; }
+    idx = idx * (1 + qoq / 100);
+    result[q] = Math.round(idx * 10) / 10;
+  }
+  return result;
+}
+
 function computeInventoryByQuarter(signals: SigRow[]): Record<string, number | null> {
   const vendors = signals.filter(r => r.type === 'vendor');
   const quarters = [...new Set(vendors.map(r => r.quarter as string))];
@@ -319,11 +336,12 @@ export async function GET(req: NextRequest) {
       }
       const sortedPricingQs = sortQuarters(Object.keys(tfPricingByQuarter));
       const latestTfPrice = sortedPricingQs.length > 0 ? tfPricingByQuarter[sortedPricingQs.at(-1)!] : null;
+      const tfPriceIndexByQuarter = computeTfPriceIndexByQuarter(tfPricingByQuarter, sortedPricingQs);
 
-      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, latestTfPrice, narratives, narrativesMom, narrativesForecast, narrativesForecastMom, forecastSupplyIndex, forecastDemandIndex, forecastMeta });
+      return NextResponse.json({ signals, config, latestQuarter, sourcesCount, totalSources, lastIngested, supplyByQuarter, supplyIndexByQuarter, demandByQuarter, demandIndexByQuarter, inventoryByQuarter, storageByQuarter, urgencyByQuarter, tfPricingByQuarter, tfPriceIndexByQuarter, latestTfPrice, narratives, narrativesMom, narrativesForecast, narrativesForecastMom, forecastSupplyIndex, forecastDemandIndex, forecastMeta });
     } catch (error) {
       console.error('Supabase data error:', error);
-      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, narrativesForecastMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} });
+      return NextResponse.json({ signals: [], config: [], latestQuarter: '', sourcesCount: 0, totalSources: 8, lastIngested: '', supplyByQuarter: {}, supplyIndexByQuarter: {}, demandByQuarter: {}, demandIndexByQuarter: {}, inventoryByQuarter: {}, storageByQuarter: {}, urgencyByQuarter: {}, tfPricingByQuarter: {}, tfPriceIndexByQuarter: {}, latestTfPrice: null, narratives: {}, narrativesMom: {}, narrativesForecast: {}, narrativesForecastMom: {}, forecastSupplyIndex: {}, forecastDemandIndex: {}, forecastMeta: {} });
     }
   }
 
