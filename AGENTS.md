@@ -3,6 +3,8 @@
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 
+<!-- END:nextjs-agent-rules -->
+
 # Project documentation
 
 **Current handoff:** `docs/NAND-Cycle-Monitor_HANDOFF_v21_2026-11-07.md`
@@ -16,4 +18,3 @@ Read it fully before touching signal logic, ingest, or chart rendering.
 
 **When a new handoff supersedes it, update the filename above in the same commit.**
 The dated filename is the version; this pointer is what makes that safe.
-<!-- END:nextjs-agent-rules -->
